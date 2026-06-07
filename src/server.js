@@ -22,9 +22,67 @@ import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/va
 const app = express();
 const db = openDb();
 
+function parseCsvEnv(value){
+  return (value || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function corsOptions(){
+  const configuredOrigins = new Set(parseCsvEnv(process.env.CORS_ORIGINS));
+  const isProduction = process.env.NODE_ENV === "production";
+  const devOrigins = new Set([
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
+  ]);
+
+  return {
+    origin(origin, callback){
+      // Non-browser callers (curl, server-to-server health checks) do not send Origin.
+      if(!origin) return callback(null, true);
+
+      const allowed = configuredOrigins.has(origin) || (!isProduction && configuredOrigins.size === 0 && devOrigins.has(origin));
+      if(allowed) return callback(null, true);
+
+      const err = new Error("CORS origin not allowed");
+      err.status = 403;
+      return callback(err);
+    }
+  };
+}
+
+function trustProxyValue(){
+  const value = (process.env.TRUST_PROXY || "").trim().toLowerCase();
+  if(["1", "true", "yes"].includes(value)) return true;
+  if(["0", "false", "no", ""].includes(value)) return false;
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric : value;
+}
+
+const trustProxySetting = trustProxyValue();
+
+function enforceHttpsInProduction(req, res, next){
+  if(process.env.NODE_ENV !== "production") return next();
+
+  const forwardedProto = String(req.header("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const forwardedHttps = Boolean(trustProxySetting) && forwardedProto === "https";
+  const isHttps = req.secure || forwardedHttps;
+
+  if(isHttps) return next();
+
+  return res.status(426).json({ error: "https_required" });
+}
+
+app.set("trust proxy", trustProxySetting);
+
 // --- middleware
+app.use(enforceHttpsInProduction);
 app.use(helmet());
-app.use(cors({ origin: true }));
+app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("tiny"));
 app.use(rateLimit({ windowMs: 60_000, max: 240 })); // 240 req/min default

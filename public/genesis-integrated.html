@@ -539,7 +539,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   async function pushTelemetry(inputs){
     if(!NDSP_BACKEND) return null;
     try{
-      const apiKey=(localStorage.getItem("syn_apiKey")||"").trim();
+      const apiKey=(sessionStorage.getItem("syn_apiKey")||"").trim();
       const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
         method:"POST", headers:{ "Content-Type":"application/json", ...(apiKey?{"x-api-key":apiKey}:{}) }, body:JSON.stringify(inputs)
       });
@@ -552,7 +552,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   async function pullState(){
     if(!NDSP_BACKEND) return null;
     try{
-      const apiKey=(localStorage.getItem("syn_apiKey")||"").trim();
+      const apiKey=(sessionStorage.getItem("syn_apiKey")||"").trim();
       const r=await fetch(NDSP_BACKEND+"/ndsp/state",{ headers: apiKey?{"x-api-key":apiKey}:{} });
       if(!r.ok) return null;
       const j=await r.json();
@@ -734,8 +734,8 @@ anomaly if |zscore(entropy)| > 2.2`;
   let itemLabel='';
 
   function setStatus(msg){ $('synStatus').textContent = msg; }
-  function saveCfg(){ localStorage.setItem('syn_apiKey',$('synApiKey').value.trim()); localStorage.setItem('syn_sessionId',$('synSession').value.trim()); localStorage.setItem('syn_itemId',$('synItem').value || ''); }
-  function loadCfg(){ $('synApiKey').value=localStorage.getItem('syn_apiKey')||''; $('synSession').value=localStorage.getItem('syn_sessionId')||''; }
+  function saveCfg(){ sessionStorage.setItem('syn_apiKey',$('synApiKey').value.trim()); sessionStorage.setItem('syn_sessionId',$('synSession').value.trim()); sessionStorage.setItem('syn_itemId',$('synItem').value || ''); }
+  function loadCfg(){ $('synApiKey').value=sessionStorage.getItem('syn_apiKey')||''; $('synSession').value=sessionStorage.getItem('syn_sessionId')||''; }
   async function api(path, opts={}){
     const key = $('synApiKey').value.trim();
     const headers = { 'content-type':'application/json', ...(opts.headers||{}), ...(key?{'x-api-key':key}:{}) };
@@ -750,7 +750,7 @@ anomaly if |zscore(entropy)| > 2.2`;
     (c.items||[]).forEach((it, idx)=>{
       const opt=document.createElement('option');
       opt.value=it.id; opt.textContent=`${it.label} — $${(it.unit_price_cents/100).toFixed(2)}/${it.unit_name||'second'}`;
-      if((localStorage.getItem('syn_itemId') && localStorage.getItem('syn_itemId')===it.id) || (!localStorage.getItem('syn_itemId') && idx===0)) opt.selected=true;
+      if((sessionStorage.getItem('syn_itemId') && sessionStorage.getItem('syn_itemId')===it.id) || (!sessionStorage.getItem('syn_itemId') && idx===0)) opt.selected=true;
       sel.appendChild(opt);
     });
     itemLabel = sel.options[sel.selectedIndex]?.textContent || '';
@@ -804,7 +804,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   window.addEventListener('focus', noteActivity);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) noteActivity(); });
 
-  $('synSave').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); setStatus('API key saved.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synSave').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); setStatus('API key saved for this browser session only.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synStart').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); await startItem(); await pullSummary(); if(!loop) loop=setInterval(tick,1000); noteActivity(); setStatus('Thinking meter armed. Move, type, or interact to accumulate seconds.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synStop').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await stopItem(); setStatus('Meter stopped manually.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synClose').addEventListener('click', ()=> closeSession().catch(e=>setStatus('Error: '+e.message)));

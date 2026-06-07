@@ -25,22 +25,21 @@
   function setStatus(msg){ const el = $("synapticsStatus"); if(el) el.textContent = msg || ""; }
 
   function getConfig(){
-    const fromLocal = {
-      apiBase: localStorage.getItem("syn_apiBase") || "",
-      apiKey: localStorage.getItem("syn_apiKey") || "",
-      sessionId: localStorage.getItem("syn_sessionId") || ""
+    const fromSession = {
+      apiBase: sessionStorage.getItem("syn_apiBase") || "",
+      apiKey: sessionStorage.getItem("syn_apiKey") || "",
+      sessionId: sessionStorage.getItem("syn_sessionId") || ""
     };
     const fromUrl = new URL(location.href);
-    const base = fromUrl.searchParams.get("base") || fromLocal.apiBase || "";
-    const key = fromUrl.searchParams.get("key") || fromLocal.apiKey || "";
-    const session = fromUrl.searchParams.get("session") || fromLocal.sessionId || "";
-    return { apiBase: base, apiKey: key, sessionId: session };
+    const base = fromUrl.searchParams.get("base") || fromSession.apiBase || "";
+    const session = fromUrl.searchParams.get("session") || fromSession.sessionId || "";
+    return { apiBase: base, apiKey: fromSession.apiKey, sessionId: session };
   }
 
   function saveConfig(){
-    localStorage.setItem("syn_apiBase", $("apiBase").value.trim());
-    localStorage.setItem("syn_apiKey", $("apiKey").value.trim());
-    localStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+    sessionStorage.setItem("syn_apiBase", $("apiBase").value.trim());
+    sessionStorage.setItem("syn_apiKey", $("apiKey").value.trim());
+    sessionStorage.setItem("syn_sessionId", $("sessionId").value.trim());
   }
 
   function slugId(label){

@@ -1,4 +1,8 @@
-import { openDb } from "./db.js";
+import { DB_AT_REST_SECURITY, openDb } from "./db.js";
+
+if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
+  throw new Error("SQLite-at-rest encryption is required before migrations can run.");
+}
 
 const db = openDb();
 
@@ -105,5 +109,5 @@ for (const [name, ddl] of catalogColumns){
   }
 }
 
-console.log("Migration complete.");
+console.log("Migration complete. SQLite at-rest decision:", DB_AT_REST_SECURITY.approach);
 db.close();

@@ -16,8 +16,10 @@ This service does 3 things:
 
 ```bash
 cd synaptics-seconds-api
-cp .env.example .env
 npm i
+export API_KEY=dev-key-1
+export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export CORS_ORIGINS=http://localhost:8080
 npm run migrate
 npm run dev
 ```
@@ -25,8 +27,8 @@ npm run dev
 Test:
 
 ```bash
-curl -H "x-api-key: dev-key-1" http://localhost:8080/health
-curl -H "x-api-key: dev-key-1" http://localhost:8080/catalog
+curl http://localhost:8080/health
+curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
 ---
@@ -34,8 +36,15 @@ curl -H "x-api-key: dev-key-1" http://localhost:8080/catalog
 ## Docker Deploy
 
 ```bash
+export API_KEY='replace-with-a-generated-secret'
+export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export CORS_ORIGINS=https://metering.example.com
+export PUBLIC_BASE_URL=https://metering.example.com
+export TRUST_PROXY=true
 docker compose up -d --build
 ```
+
+`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
 
 ---
 
@@ -44,8 +53,7 @@ docker compose up -d --build
 ### Auth
 Non-public API endpoints require one of:
 
-- `x-api-key: <key>` header (comma-separated list configured in `.env`)
-- An authenticated Google OAuth session cookie created by `/auth/google/callback`
+- `x-api-key: <key>` header. Store only comma-separated SHA-256 key digests in `API_KEY_DIGESTS`; do not store raw API keys in environment variables or config files.
 
 ### Catalog
 - `GET /catalog` — list billable items parsed from the invoice template
@@ -113,9 +121,10 @@ COOKIE_SECURE=true
 Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
 
 ## Production Notes
-- Put this behind HTTPS (Cloudflare / Nginx / Caddy).
-- Rotate API keys, one per client.
-- Do not accept client-supplied `account_id` for trusted identity. Account ownership is derived from the authenticated Google/session context and written to metering sessions server-side.
+- Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
+- Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.
+- Rotate API keys, one per client, and keep only their SHA-256 digests in `API_KEY_DIGESTS`. Generate digests with `printf %s "$API_KEY" | sha256sum | awk '{print $1}'`.
+- If you need multi-tenant billing, use `account_id` and `seat_id` fields (already supported in schema).
 
 
 ---
@@ -138,17 +147,26 @@ After starting the server, open:
 
 ## Clean Local Server Start
 ```bash
-cp .env.example .env
 rm -rf node_modules package-lock.json
 npm install
+export API_KEY=dev-key-1
+export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export CORS_ORIGINS=http://localhost:8080
 node src/db/migrate.js
 node src/server.js
 ```
 
 ## Clean Docker Server Start
 ```bash
+export API_KEY='replace-with-a-generated-secret'
+export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export CORS_ORIGINS=https://metering.example.com
+export PUBLIC_BASE_URL=https://metering.example.com
+export TRUST_PROXY=true
 docker compose up -d --build
 ```
+
+`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
 
 If you see an `invalid ELF header` error, the project was copied with `node_modules` built on a different machine (for example macOS -> Linux). Delete `node_modules` and reinstall on the target server.
 
@@ -170,6 +188,31 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 - `/ndsp/state?session_id=sess_...` — returns NDSP policy/state plus optional meter summary
 
 ### Notes
-- Enter your API key in the Genesis overlay once. It is stored in localStorage for the browser.
+- Enter your API key in the Genesis overlay once per tab/session. It is stored only in sessionStorage and is cleared when the browser session ends.
 - Start the thinking meter, then interact with the page. Quantity and invoice totals will rise as active seconds are recorded.
 - When activity stops for ~5 seconds, the page pauses metering automatically.
+
+## Security Baseline
+
+### Transport encryption
+- TLS is required for production deployments. Run the Node service behind a TLS-terminating proxy or load balancer and set `NODE_ENV=production`.
+- Set `TRUST_PROXY=true` only when the proxy is trusted and configured to pass `X-Forwarded-Proto`; production HTTP requests without `https` are rejected with `https_required`.
+- Set `PUBLIC_BASE_URL` to the public `https://` origin clients should use.
+
+### API keys and rotation
+- Raw API keys must not be committed, baked into Docker images, or stored in environment variables. Store SHA-256 digests in `API_KEY_DIGESTS` and send the raw key only from the client in the `x-api-key` header.
+- Use one key per client or integration. To rotate, add the new digest, deploy, move the client to the new key, then remove the old digest and deploy again.
+- API-key comparisons are performed against SHA-256 digests using Node's timing-safe comparison.
+
+### Data at rest
+- Current SQLite tables store metering/session identifiers and telemetry payloads, not raw API keys, OAuth refresh tokens, payment secrets, or other account secrets. First-pass baseline therefore relies on encrypted host volumes/disks, least-privileged file access, and backups encrypted by the deployment platform.
+- Do not add sensitive account/OAuth fields to SQLite until SQLCipher or field-level envelope encryption is integrated. Setting `DB_ENCRYPTION_REQUIRED=true` intentionally fails fast in this build to prevent a false sense of encryption.
+
+### Browser secret handling
+- Browser pages must not persist API keys in `localStorage`, IndexedDB, cookies without strict security attributes, or other long-lived client storage.
+- The included console and Genesis page use `sessionStorage` only as a temporary compatibility bridge. Prefer a backend-issued short-lived token/session flow before exposing these pages to untrusted users.
+
+### Production assumptions
+- Deploy behind a trusted reverse proxy that terminates TLS, forwards `X-Forwarded-Proto`, and restricts administrative access.
+- Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through a secret manager or deployment environment.
+- Use encrypted persistent volumes and encrypted backups for `DATABASE_PATH`.
