@@ -7,7 +7,14 @@ import rateLimit from "express-rate-limit";
 import { nanoid } from "nanoid";
 
 import { openDb } from "./db/db.js";
-import { requireApiKey } from "./lib/auth.js";
+import {
+  googleOAuthCallback,
+  loadAuthenticatedAccount,
+  logout,
+  requireAccount,
+  requireApiKeyOrAccount,
+  startGoogleOAuth
+} from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
@@ -16,9 +23,67 @@ import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 const app = express();
 const db = openDb();
 
+function parseCsvEnv(value){
+  return (value || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function corsOptions(){
+  const configuredOrigins = new Set(parseCsvEnv(process.env.CORS_ORIGINS));
+  const isProduction = process.env.NODE_ENV === "production";
+  const devOrigins = new Set([
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
+  ]);
+
+  return {
+    origin(origin, callback){
+      // Non-browser callers (curl, server-to-server health checks) do not send Origin.
+      if(!origin) return callback(null, true);
+
+      const allowed = configuredOrigins.has(origin) || (!isProduction && configuredOrigins.size === 0 && devOrigins.has(origin));
+      if(allowed) return callback(null, true);
+
+      const err = new Error("CORS origin not allowed");
+      err.status = 403;
+      return callback(err);
+    }
+  };
+}
+
+function trustProxyValue(){
+  const value = (process.env.TRUST_PROXY || "").trim().toLowerCase();
+  if(["1", "true", "yes"].includes(value)) return true;
+  if(["0", "false", "no", ""].includes(value)) return false;
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric : value;
+}
+
+const trustProxySetting = trustProxyValue();
+
+function enforceHttpsInProduction(req, res, next){
+  if(process.env.NODE_ENV !== "production") return next();
+
+  const forwardedProto = String(req.header("x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const forwardedHttps = Boolean(trustProxySetting) && forwardedProto === "https";
+  const isHttps = req.secure || forwardedHttps;
+
+  if(isHttps) return next();
+
+  return res.status(426).json({ error: "https_required" });
+}
+
+app.set("trust proxy", trustProxySetting);
+
 // --- middleware
+app.use(enforceHttpsInProduction);
 app.use(helmet());
-app.use(cors({ origin: true }));
+app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("tiny"));
 app.use(rateLimit({ windowMs: 60_000, max: 240 })); // 240 req/min default
@@ -54,12 +119,37 @@ app.get("/genesis", (req,res)=>{
 // --- health (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
 
+// --- Google OAuth + account sessions
+app.use(loadAuthenticatedAccount(db));
+app.get("/auth/google/start", startGoogleOAuth);
+app.get("/auth/google/callback", googleOAuthCallback(db));
+app.post("/auth/logout", logout(db));
+app.get("/me", requireAccount, (req,res)=>{
+  const identities = db.prepare(`
+    SELECT provider_name, provider_subject, email, email_verified, created_at, updated_at
+    FROM account_identities
+    WHERE account_id=?
+    ORDER BY provider_name
+  `).all(req.authAccount.id);
+  res.json({ account: req.authAccount, identities });
+});
+
 // --- auth for everything else
 app.use((req,res,next)=>{ res.setHeader('X-Synaptics-Systems','seconds-metering-api'); next(); });
 app.use((req,res,next)=>{
   if(req.path === "/health" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
-  return requireApiKey(req,res,next);
+  return requireApiKeyOrAccount(req,res,next);
 });
+
+
+function canAccessMeteringSession(req, sess){
+  if(req.apiKeyAuthenticated) return true;
+  return Boolean(req.authAccount && sess?.account_id === req.authAccount.id);
+}
+
+function rejectForbiddenSession(res){
+  return res.status(403).json({ error:"session_forbidden" });
+}
 
 // --- catalog
 app.get("/catalog", (req,res,next)=>{
@@ -90,8 +180,8 @@ app.post("/sessions", (req,res,next)=>{
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
-    `).run(id, req.auth.accountId, body.seat_id ?? null);
-    res.status(201).json({ id, account_id: req.auth.accountId, status:"open" });
+    `).run(id, req.authAccount?.id ?? null, body.seat_id ?? null);
+    res.status(201).json({ id, status:"open", account_id: req.authAccount?.id ?? null });
   }catch(e){ next(e); }
 });
 
@@ -100,8 +190,9 @@ app.post("/sessions/:id/start", (req,res,next)=>{
     const sessionId = req.params.id;
     const body = parseBody(StartBody, req.body);
 
-    requireScope(req, "sessions:write");
-    const sess = loadOwnedSession(db, req, sessionId);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
+    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     const item = db.prepare("SELECT * FROM catalog_items WHERE id=?").get(body.item_id);
@@ -123,8 +214,9 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
     const sessionId = req.params.id;
     const body = parseBody(HeartbeatBody, req.body);
 
-    requireScope(req, "sessions:write");
-    const sess = loadOwnedSession(db, req, sessionId);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
+    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
@@ -141,8 +233,9 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
 app.post("/sessions/:id/stop", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
-    requireScope(req, "sessions:write");
-    const sess = loadOwnedSession(db, req, sessionId);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
+    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     db.prepare(`
@@ -157,8 +250,9 @@ app.post("/sessions/:id/stop", (req,res,next)=>{
 app.post("/sessions/:id/close", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
-    requireScope(req, "sessions:write");
-    const sess = loadOwnedSession(db, req, sessionId);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
+    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"already_closed" });
 
     db.prepare(`
@@ -170,82 +264,76 @@ app.post("/sessions/:id/close", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
-app.get("/sessions/:id/summary", (req,res,next)=>{
-  try{
-    requireScope(req, "sessions:read");
-    loadOwnedSession(db, req, req.params.id);
-    const summary = computeSessionSummary(db, req.params.id);
-    res.json(summary);
-  }catch(e){ next(e); }
+app.get("/sessions/:id/summary", (req,res)=>{
+  const summary = computeSessionSummary(db, req.params.id);
+  if(!summary) return res.status(404).json({ error:"session_not_found" });
+  if(!canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
+  res.json(summary);
 });
 
 
 // --- invoices
-app.post("/invoices/from-session", (req,res,next)=>{
-  try{
-    requireScope(req, "invoices:write");
-    const { session_id } = req.body || {};
-    if(!session_id) return res.status(400).json({ error:"missing_session_id" });
-    loadOwnedSession(db, req, session_id);
-    const summary = computeSessionSummary(db, session_id);
+app.post("/invoices/from-session", (req,res)=>{
+  const { session_id } = req.body || {};
+  if(!session_id) return res.status(400).json({ error:"missing_session_id" });
+  const summary = computeSessionSummary(db, session_id);
+  if(!summary) return res.status(404).json({ error:"session_not_found" });
+  if(!canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
 
-    const issued_at = new Date().toISOString();
-    const invoice = {
-      schema: "synaptics.invoice.v1",
-      issued_at,
-      session_id,
-      account_id: summary.session.account_id,
-      seat_id: summary.session.seat_id,
-      currency: summary.total.currency || "CAD",
-      lines: summary.lines.map(l => ({
-        item_id: l.item_id,
-        description: l.label,
-        seconds: l.seconds,
-        quantity: l.quantity,
-        quantity_unit: l.quantity_unit,
-        auto_increment_by: l.auto_increment_by,
-        unit_price_cents: l.unit_price.cents,
-        line_total_cents: l.cost.cents
-      })),
-      totals: {
-        intelligence_seconds: summary.metrics.intelligence_seconds,
-        tracked_quantity: summary.metrics.tracked_quantity,
-        subtotal_cents: summary.total.cents,
-        total_cents: summary.total.cents
-      }
-    };
+  const issued_at = new Date().toISOString();
+  const invoice = {
+    schema: "synaptics.invoice.v1",
+    issued_at,
+    session_id,
+    account_id: summary.session.account_id,
+    seat_id: summary.session.seat_id,
+    currency: summary.total.currency || "CAD",
+    lines: summary.lines.map(l => ({
+      item_id: l.item_id,
+      description: l.label,
+      seconds: l.seconds,
+      quantity: l.quantity,
+      quantity_unit: l.quantity_unit,
+      auto_increment_by: l.auto_increment_by,
+      unit_price_cents: l.unit_price.cents,
+      line_total_cents: l.cost.cents
+    })),
+    totals: {
+      intelligence_seconds: summary.metrics.intelligence_seconds,
+      tracked_quantity: summary.metrics.tracked_quantity,
+      subtotal_cents: summary.total.cents,
+      total_cents: summary.total.cents
+    }
+  };
 
-    res.json({ invoice });
-  }catch(e){ next(e); }
+  res.json({ invoice });
 });
 
 // --- NDSP endpoints (as referenced by the Genesis Core HTML)
-app.get("/ndsp/state", (req,res,next)=>{
-  try{
-    requireScope(req, "telemetry:read");
-    const sessionId = req.query?.session_id || null;
-    const summary = sessionId ? (loadOwnedSession(db, req, sessionId), computeSessionSummary(db, sessionId)) : null;
-    // A small, stable policy payload. You can extend this later.
-    const policy = {
-      channelCaps: {
-        c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
-      },
-      tick_rate_hz: 1,
-      persistence: "server-db"
-    };
+app.get("/ndsp/state", (req,res)=>{
+  const sessionId = req.query?.session_id || null;
+  const summary = sessionId ? computeSessionSummary(db, sessionId) : null;
+  if(summary && !canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
+  // A small, stable policy payload. You can extend this later.
+  const policy = {
+    channelCaps: {
+      c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
+    },
+    tick_rate_hz: 1,
+    persistence: "server-db"
+  };
 
-    // Provide a minimal "state" object structure compatible with the UI.
-    // (The UI can also run in local mode if this is absent.)
-    const state = {
-      meta: { tick: 0 },
-      inputs: {},
-      channels: {},
-      derived: { entropyIndex: 0, coherence: 0, trend: 0, anomalies: [] },
-      history: []
-    };
+  // Provide a minimal "state" object structure compatible with the UI.
+  // (The UI can also run in local mode if this is absent.)
+  const state = {
+    meta: { tick: 0 },
+    inputs: {},
+    channels: {},
+    derived: { entropyIndex: 0, coherence: 0, trend: 0, anomalies: [] },
+    history: []
+  };
 
-    res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
-  }catch(e){ next(e); }
+  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
 });
 
 app.post("/ndsp/telemetry", (req,res,next)=>{

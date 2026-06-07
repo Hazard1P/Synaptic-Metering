@@ -1,4 +1,8 @@
-import { openDb } from "./db.js";
+import { DB_AT_REST_SECURITY, openDb } from "./db.js";
+
+if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
+  throw new Error("SQLite-at-rest encryption is required before migrations can run.");
+}
 
 const db = openDb();
 
@@ -16,6 +20,55 @@ CREATE TABLE IF NOT EXISTS catalog_items (
   source TEXT NOT NULL DEFAULT 'invoice',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  display_name TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS account_identities (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  provider_subject TEXT NOT NULL,
+  email TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  UNIQUE(provider_name, provider_subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_identities_account_id
+  ON account_identities(account_id);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  access_token_ciphertext TEXT,
+  refresh_token_ciphertext TEXT,
+  scope TEXT,
+  token_type TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  UNIQUE(account_id, provider_name)
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
+  ON auth_sessions(account_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -59,15 +112,5 @@ for (const [name, ddl] of catalogColumns){
   }
 }
 
-const telemetryColumns = [
-  ["account_id", "TEXT"],
-  ["session_id", "TEXT"]
-];
-for (const [name, ddl] of telemetryColumns){
-  if(!hasColumn('ndsp_telemetry', name)){
-    db.exec(`ALTER TABLE ndsp_telemetry ADD COLUMN ${name} ${ddl}`);
-  }
-}
-
-console.log("Migration complete.");
+console.log("Migration complete. SQLite at-rest decision:", DB_AT_REST_SECURITY.approach);
 db.close();

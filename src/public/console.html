@@ -228,14 +228,14 @@
   setInterval(clock, 1000); clock();
 
   function loadCfg(){
-    $("apiBase").value = localStorage.getItem("syn_apiBase") || location.origin;
-    $("apiKey").value = localStorage.getItem("syn_apiKey") || "";
-    $("sessionId").value = localStorage.getItem("syn_sessionId") || "";
+    $("apiBase").value = sessionStorage.getItem("syn_apiBase") || location.origin;
+    $("apiKey").value = sessionStorage.getItem("syn_apiKey") || "";
+    $("sessionId").value = sessionStorage.getItem("syn_sessionId") || "";
   }
   function saveCfg(){
-    localStorage.setItem("syn_apiBase", $("apiBase").value.trim());
-    localStorage.setItem("syn_apiKey", $("apiKey").value.trim());
-    localStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+    sessionStorage.setItem("syn_apiBase", $("apiBase").value.trim());
+    sessionStorage.setItem("syn_apiKey", $("apiKey").value.trim());
+    sessionStorage.setItem("syn_sessionId", $("sessionId").value.trim());
   }
 
   async function api(path, opts){
