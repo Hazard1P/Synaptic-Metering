@@ -1,10 +1,9 @@
 import { z } from "zod";
 
 export const CreateSessionBody = z.object({
-  account_id: z.string().min(1).max(80).optional(),
   seat_id: z.string().min(1).max(80).optional(),
   metadata: z.record(z.any()).optional()
-});
+}).strict();
 
 export const StartBody = z.object({
   item_id: z.string().min(1).max(120)

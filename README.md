@@ -51,7 +51,7 @@ docker compose up -d --build
 ## Main Endpoints (API)
 
 ### Auth
-All non-public endpoints require:
+Non-public API endpoints require one of:
 
 - `x-api-key: <key>` header. Store only comma-separated SHA-256 key digests in `API_KEY_DIGESTS`; do not store raw API keys in environment variables or config files.
 
@@ -84,6 +84,41 @@ The parser:
   - computes a `rate_per_second` (unit price is already shown as per-second in the invoice)
 
 ---
+
+## Google OAuth account linking
+
+This service supports first-class internal accounts linked to Google OAuth identities. The internal `accounts.id` is the stable account used for metering sessions. Google `sub` is stored in `account_identities.provider_subject` as the stable external identity; email is treated as mutable metadata and is refreshed from verified Google ID token claims on each login.
+
+### OAuth routes
+- `GET /auth/google/start` — starts the Google OAuth authorization-code flow.
+- `GET /auth/google/callback` — exchanges the code, verifies the Google ID token, links or creates the internal account, and creates the HTTP-only account session cookie.
+- `POST /auth/logout` — deletes the current web auth session and clears the session cookie.
+- `GET /me` — returns the authenticated internal account and linked identities.
+
+### Required environment variables
+
+```bash
+GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_REDIRECT_URI=https://your-domain.example/auth/google/callback
+PUBLIC_BASE_URL=https://your-domain.example
+TOKEN_ENCRYPTION_KEY=base64-or-hex-32-byte-key-material
+```
+
+Optional OAuth/session configuration:
+
+```bash
+GOOGLE_ALLOWED_DOMAINS=example.com,subsidiary.example
+GOOGLE_OAUTH_RETAIN_TOKENS=false
+GOOGLE_OAUTH_PROMPT=select_account
+OAUTH_SUCCESS_REDIRECT=/me
+OAUTH_STATE_SECRET=separate-hmac-secret-if-not-using-token-key
+SESSION_COOKIE_NAME=syn_meter_session
+AUTH_SESSION_TTL_DAYS=30
+COOKIE_SECURE=true
+```
+
+Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
 
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.

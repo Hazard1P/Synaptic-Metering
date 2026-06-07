@@ -7,7 +7,14 @@ import rateLimit from "express-rate-limit";
 import { nanoid } from "nanoid";
 
 import { openDb } from "./db/db.js";
-import { requireApiKey } from "./lib/auth.js";
+import {
+  googleOAuthCallback,
+  loadAuthenticatedAccount,
+  logout,
+  requireAccount,
+  requireApiKeyOrAccount,
+  startGoogleOAuth
+} from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
@@ -111,12 +118,37 @@ app.get("/genesis", (req,res)=>{
 // --- health (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
 
+// --- Google OAuth + account sessions
+app.use(loadAuthenticatedAccount(db));
+app.get("/auth/google/start", startGoogleOAuth);
+app.get("/auth/google/callback", googleOAuthCallback(db));
+app.post("/auth/logout", logout(db));
+app.get("/me", requireAccount, (req,res)=>{
+  const identities = db.prepare(`
+    SELECT provider_name, provider_subject, email, email_verified, created_at, updated_at
+    FROM account_identities
+    WHERE account_id=?
+    ORDER BY provider_name
+  `).all(req.authAccount.id);
+  res.json({ account: req.authAccount, identities });
+});
+
 // --- auth for everything else
 app.use((req,res,next)=>{ res.setHeader('X-Synaptics-Systems','seconds-metering-api'); next(); });
 app.use((req,res,next)=>{
   if(req.path === "/health" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
-  return requireApiKey(req,res,next);
+  return requireApiKeyOrAccount(req,res,next);
 });
+
+
+function canAccessMeteringSession(req, sess){
+  if(req.apiKeyAuthenticated) return true;
+  return Boolean(req.authAccount && sess?.account_id === req.authAccount.id);
+}
+
+function rejectForbiddenSession(res){
+  return res.status(403).json({ error:"session_forbidden" });
+}
 
 // --- catalog
 app.get("/catalog", (req,res)=>{
@@ -137,8 +169,8 @@ app.post("/sessions", (req,res,next)=>{
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
-    `).run(id, body.account_id ?? null, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open" });
+    `).run(id, req.authAccount?.id ?? null, body.seat_id ?? null);
+    res.status(201).json({ id, status:"open", account_id: req.authAccount?.id ?? null });
   }catch(e){ next(e); }
 });
 
@@ -149,6 +181,7 @@ app.post("/sessions/:id/start", (req,res,next)=>{
 
     const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
     if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     const item = db.prepare("SELECT * FROM catalog_items WHERE id=?").get(body.item_id);
@@ -172,6 +205,7 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
 
     const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
     if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
@@ -190,6 +224,7 @@ app.post("/sessions/:id/stop", (req,res,next)=>{
     const sessionId = req.params.id;
     const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
     if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     db.prepare(`
@@ -206,6 +241,7 @@ app.post("/sessions/:id/close", (req,res,next)=>{
     const sessionId = req.params.id;
     const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
     if(!sess) return res.status(404).json({ error:"session_not_found" });
+    if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"already_closed" });
 
     db.prepare(`
@@ -220,6 +256,7 @@ app.post("/sessions/:id/close", (req,res,next)=>{
 app.get("/sessions/:id/summary", (req,res)=>{
   const summary = computeSessionSummary(db, req.params.id);
   if(!summary) return res.status(404).json({ error:"session_not_found" });
+  if(!canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
   res.json(summary);
 });
 
@@ -230,6 +267,7 @@ app.post("/invoices/from-session", (req,res)=>{
   if(!session_id) return res.status(400).json({ error:"missing_session_id" });
   const summary = computeSessionSummary(db, session_id);
   if(!summary) return res.status(404).json({ error:"session_not_found" });
+  if(!canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
 
   const issued_at = new Date().toISOString();
   const invoice = {
@@ -264,6 +302,7 @@ app.post("/invoices/from-session", (req,res)=>{
 app.get("/ndsp/state", (req,res)=>{
   const sessionId = req.query?.session_id || null;
   const summary = sessionId ? computeSessionSummary(db, sessionId) : null;
+  if(summary && !canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
   // A small, stable policy payload. You can extend this later.
   const policy = {
     channelCaps: {
