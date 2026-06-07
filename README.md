@@ -44,7 +44,27 @@ docker compose up -d --build
 ### Auth
 All non-public endpoints require:
 
-- `x-api-key: <key>` header (comma-separated list configured in `.env`)
+- `x-api-key: <key>` header. Keys are configured with `API_KEYS` in `.env`.
+- Legacy entries are still accepted as comma-separated raw keys, for example `API_KEYS=dev-key-1,dev-key-2`. Each legacy key becomes its own authenticated account with full `*` scope and an account id equal to the key value.
+- Scoped multi-tenant entries use `key-id:secret:account-id:scope+scope`, separated by commas. Example:
+
+```dotenv
+API_KEYS=acct-a-key:secret-a:acct_a:catalog:read+sessions:read+sessions:write+invoices:write+telemetry:read+telemetry:write
+```
+
+The server converts the matched API key into `req.auth = { accountId, keyId, scopes }`. Supported scopes are:
+
+- `*` — full access for the authenticated account
+- `catalog:read` / `catalog:write`
+- `sessions:read` / `sessions:write`
+- `invoices:write`
+- `telemetry:read` / `telemetry:write`
+
+### Account boundaries
+
+API keys are account-bound. Session creation always stores the authenticated account id on the session; clients cannot create sessions for another account by posting a different `account_id`. All session lifecycle routes, session summaries, invoice generation from sessions, NDSP state lookups with a `session_id`, and NDSP telemetry submissions with a `session_id` first load the session and require `session.account_id === req.auth.accountId`. Cross-account access is rejected with `403`.
+
+NDSP telemetry is account-scoped. New telemetry rows store the authenticated `account_id` and, when supplied, the owned `session_id` alongside the JSON payload.
 
 ### Catalog
 - `GET /catalog` — list billable items parsed from the invoice template

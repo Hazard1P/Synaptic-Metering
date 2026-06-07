@@ -39,8 +39,11 @@ CREATE TABLE IF NOT EXISTS usage_events (
 
 CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
   at TEXT NOT NULL DEFAULT (datetime('now')),
-  payload_json TEXT NOT NULL
+  payload_json TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 `);
 
@@ -53,6 +56,16 @@ const catalogColumns = [
 for (const [name, ddl] of catalogColumns){
   if(!hasColumn('catalog_items', name)){
     db.exec(`ALTER TABLE catalog_items ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+const telemetryColumns = [
+  ["account_id", "TEXT"],
+  ["session_id", "TEXT"]
+];
+for (const [name, ddl] of telemetryColumns){
+  if(!hasColumn('ndsp_telemetry', name)){
+    db.exec(`ALTER TABLE ndsp_telemetry ADD COLUMN ${name} ${ddl}`);
   }
 }
 

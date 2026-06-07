@@ -11,6 +11,7 @@ import { requireApiKey } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
+import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
 const db = openDb();
@@ -61,26 +62,36 @@ app.use((req,res,next)=>{
 });
 
 // --- catalog
-app.get("/catalog", (req,res)=>{
-  const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
-  res.json({ items: rows });
+app.get("/catalog", (req,res,next)=>{
+  try{
+    requireScope(req, "catalog:read");
+    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
+    res.json({ items: rows });
+  }catch(e){ next(e); }
 });
 
-app.post("/catalog/refresh", (req,res)=>{
-  const rows = refreshCatalog(db);
-  res.json({ ok:true, items: rows });
+app.post("/catalog/refresh", (req,res,next)=>{
+  try{
+    requireScope(req, "catalog:write");
+    const rows = refreshCatalog(db);
+    res.json({ ok:true, items: rows });
+  }catch(e){ next(e); }
 });
 
 // --- sessions
 app.post("/sessions", (req,res,next)=>{
   try{
+    requireScope(req, "sessions:write");
     const body = parseBody(CreateSessionBody, req.body);
+    if(body.account_id && body.account_id !== req.auth.accountId){
+      return res.status(403).json({ error:"session_account_forbidden" });
+    }
     const id = "sess_" + nanoid(16);
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
-    `).run(id, body.account_id ?? null, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open" });
+    `).run(id, req.auth.accountId, body.seat_id ?? null);
+    res.status(201).json({ id, account_id: req.auth.accountId, status:"open" });
   }catch(e){ next(e); }
 });
 
@@ -89,8 +100,8 @@ app.post("/sessions/:id/start", (req,res,next)=>{
     const sessionId = req.params.id;
     const body = parseBody(StartBody, req.body);
 
-    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
-    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    requireScope(req, "sessions:write");
+    const sess = loadOwnedSession(db, req, sessionId);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     const item = db.prepare("SELECT * FROM catalog_items WHERE id=?").get(body.item_id);
@@ -112,8 +123,8 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
     const sessionId = req.params.id;
     const body = parseBody(HeartbeatBody, req.body);
 
-    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
-    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    requireScope(req, "sessions:write");
+    const sess = loadOwnedSession(db, req, sessionId);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
@@ -130,8 +141,8 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
 app.post("/sessions/:id/stop", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
-    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
-    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    requireScope(req, "sessions:write");
+    const sess = loadOwnedSession(db, req, sessionId);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
     db.prepare(`
@@ -146,8 +157,8 @@ app.post("/sessions/:id/stop", (req,res,next)=>{
 app.post("/sessions/:id/close", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
-    const sess = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
-    if(!sess) return res.status(404).json({ error:"session_not_found" });
+    requireScope(req, "sessions:write");
+    const sess = loadOwnedSession(db, req, sessionId);
     if(sess.status !== "open") return res.status(409).json({ error:"already_closed" });
 
     db.prepare(`
@@ -159,82 +170,96 @@ app.post("/sessions/:id/close", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
-app.get("/sessions/:id/summary", (req,res)=>{
-  const summary = computeSessionSummary(db, req.params.id);
-  if(!summary) return res.status(404).json({ error:"session_not_found" });
-  res.json(summary);
+app.get("/sessions/:id/summary", (req,res,next)=>{
+  try{
+    requireScope(req, "sessions:read");
+    loadOwnedSession(db, req, req.params.id);
+    const summary = computeSessionSummary(db, req.params.id);
+    res.json(summary);
+  }catch(e){ next(e); }
 });
 
 
 // --- invoices
-app.post("/invoices/from-session", (req,res)=>{
-  const { session_id } = req.body || {};
-  if(!session_id) return res.status(400).json({ error:"missing_session_id" });
-  const summary = computeSessionSummary(db, session_id);
-  if(!summary) return res.status(404).json({ error:"session_not_found" });
+app.post("/invoices/from-session", (req,res,next)=>{
+  try{
+    requireScope(req, "invoices:write");
+    const { session_id } = req.body || {};
+    if(!session_id) return res.status(400).json({ error:"missing_session_id" });
+    loadOwnedSession(db, req, session_id);
+    const summary = computeSessionSummary(db, session_id);
 
-  const issued_at = new Date().toISOString();
-  const invoice = {
-    schema: "synaptics.invoice.v1",
-    issued_at,
-    session_id,
-    account_id: summary.session.account_id,
-    seat_id: summary.session.seat_id,
-    currency: summary.total.currency || "CAD",
-    lines: summary.lines.map(l => ({
-      item_id: l.item_id,
-      description: l.label,
-      seconds: l.seconds,
-      quantity: l.quantity,
-      quantity_unit: l.quantity_unit,
-      auto_increment_by: l.auto_increment_by,
-      unit_price_cents: l.unit_price.cents,
-      line_total_cents: l.cost.cents
-    })),
-    totals: {
-      intelligence_seconds: summary.metrics.intelligence_seconds,
-      tracked_quantity: summary.metrics.tracked_quantity,
-      subtotal_cents: summary.total.cents,
-      total_cents: summary.total.cents
-    }
-  };
+    const issued_at = new Date().toISOString();
+    const invoice = {
+      schema: "synaptics.invoice.v1",
+      issued_at,
+      session_id,
+      account_id: summary.session.account_id,
+      seat_id: summary.session.seat_id,
+      currency: summary.total.currency || "CAD",
+      lines: summary.lines.map(l => ({
+        item_id: l.item_id,
+        description: l.label,
+        seconds: l.seconds,
+        quantity: l.quantity,
+        quantity_unit: l.quantity_unit,
+        auto_increment_by: l.auto_increment_by,
+        unit_price_cents: l.unit_price.cents,
+        line_total_cents: l.cost.cents
+      })),
+      totals: {
+        intelligence_seconds: summary.metrics.intelligence_seconds,
+        tracked_quantity: summary.metrics.tracked_quantity,
+        subtotal_cents: summary.total.cents,
+        total_cents: summary.total.cents
+      }
+    };
 
-  res.json({ invoice });
+    res.json({ invoice });
+  }catch(e){ next(e); }
 });
 
 // --- NDSP endpoints (as referenced by the Genesis Core HTML)
-app.get("/ndsp/state", (req,res)=>{
-  const sessionId = req.query?.session_id || null;
-  const summary = sessionId ? computeSessionSummary(db, sessionId) : null;
-  // A small, stable policy payload. You can extend this later.
-  const policy = {
-    channelCaps: {
-      c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
-    },
-    tick_rate_hz: 1,
-    persistence: "server-db"
-  };
+app.get("/ndsp/state", (req,res,next)=>{
+  try{
+    requireScope(req, "telemetry:read");
+    const sessionId = req.query?.session_id || null;
+    const summary = sessionId ? (loadOwnedSession(db, req, sessionId), computeSessionSummary(db, sessionId)) : null;
+    // A small, stable policy payload. You can extend this later.
+    const policy = {
+      channelCaps: {
+        c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
+      },
+      tick_rate_hz: 1,
+      persistence: "server-db"
+    };
 
-  // Provide a minimal "state" object structure compatible with the UI.
-  // (The UI can also run in local mode if this is absent.)
-  const state = {
-    meta: { tick: 0 },
-    inputs: {},
-    channels: {},
-    derived: { entropyIndex: 0, coherence: 0, trend: 0, anomalies: [] },
-    history: []
-  };
+    // Provide a minimal "state" object structure compatible with the UI.
+    // (The UI can also run in local mode if this is absent.)
+    const state = {
+      meta: { tick: 0 },
+      inputs: {},
+      channels: {},
+      derived: { entropyIndex: 0, coherence: 0, trend: 0, anomalies: [] },
+      history: []
+    };
 
-  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
+    res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
+  }catch(e){ next(e); }
 });
 
-app.post("/ndsp/telemetry", (req,res)=>{
-  const id = "t_" + nanoid(18);
-  const payload = req.body ?? {};
-  db.prepare("INSERT INTO ndsp_telemetry (id, payload_json) VALUES (?, ?)").run(id, JSON.stringify(payload));
+app.post("/ndsp/telemetry", (req,res,next)=>{
+  try{
+    requireScope(req, "telemetry:write");
+    const id = "t_" + nanoid(18);
+    const payload = req.body ?? {};
+    const sessionId = payload.session_id || null;
+    if(sessionId) loadOwnedSession(db, req, sessionId);
+    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, req.auth.accountId, sessionId, JSON.stringify(payload));
 
-  // Echo back a lightweight state acknowledgment
-  res.json({ ok:true, id, state: { meta:{ received:true, at:new Date().toISOString() } } });
+    // Echo back a lightweight state acknowledgment
+    res.json({ ok:true, id, account_id: req.auth.accountId, session_id: sessionId, state: { meta:{ received:true, at:new Date().toISOString() } } });
+  }catch(e){ next(e); }
 });
 
 // --- error handler
