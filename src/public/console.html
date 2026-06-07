@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Synaptics.Systems • NDSP Genesis • Seconds Console</title>
+  <style>
+    :root{ color-scheme: dark; }
+    body{
+      margin:0;
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background: radial-gradient(1000px 500px at 20% 10%, rgba(0,245,255,.16), transparent 60%),
+                  radial-gradient(900px 460px at 80% 30%, rgba(124,77,255,.18), transparent 60%),
+                  radial-gradient(900px 520px at 50% 90%, rgba(0,255,136,.10), transparent 60%),
+                  #05070b;
+      color:#eaf2ff;
+      height:100vh;
+      overflow:hidden;
+    }
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 14px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      background: rgba(10,14,20,.72);
+      backdrop-filter: blur(10px);
+    }
+    header .brand{display:flex; gap:12px; align-items:center;}
+    header img{height:34px;}
+    header .meta{font-size:12px; color:#a7b3c7;}
+    .wrap{display:grid; grid-template-columns: 1.4fr 1fr; height:calc(100vh - 60px);}
+    @media (max-width: 1100px){
+      body{overflow:auto;}
+      .wrap{grid-template-columns:1fr; height:auto; overflow:auto;}
+    }
+    .panel{
+      padding:14px;
+      overflow:auto;
+      border-right:1px solid rgba(255,255,255,.06);
+    }
+    .panel:last-child{border-right:none;}
+    .card{
+      background: rgba(12,16,22,.70);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius: 18px;
+      padding: 14px;
+      box-shadow: 0 12px 50px rgba(0,0,0,.45);
+      backdrop-filter: blur(10px);
+      margin-bottom: 12px;
+    }
+    h2{margin:0 0 10px; font-size:14px; letter-spacing:.2px;}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    label{font-size:12px; color:#b9c6db;}
+    input, select, button{
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.30);
+      color:#eaf2ff;
+      padding:8px 10px;
+      font-size:13px;
+      outline:none;
+    }
+    input{min-width:220px;}
+    button{cursor:pointer;}
+    button.primary{
+      background: linear-gradient(90deg, rgba(0,245,255,.22), rgba(124,77,255,.22), rgba(0,255,136,.18));
+      border-color: rgba(255,255,255,.18);
+    }
+    button.danger{background: rgba(255,80,80,.12); border-color: rgba(255,80,80,.25);}
+    .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+    @media (max-width: 1100px){ .grid2{grid-template-columns:1fr;} }
+    .kpi{
+      display:flex; flex-direction:column; gap:6px;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:16px;
+      padding:12px;
+      background: rgba(0,0,0,.22);
+    }
+    .kpi .v{font-size:22px; font-weight:800;}
+    .kpi .l{font-size:12px; color:#a7b3c7;}
+    .status{font-size:12px; color:#a7b3c7;}
+    iframe.viewer{
+      width:100%;
+      height:72vh;
+      border:1px solid rgba(255,255,255,.10);
+      border-radius: 16px;
+      background: rgba(0,0,0,.20);
+    }
+    pre{
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(0,0,0,.35);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 12px;
+      color:#eaf2ff;
+      font-size:12px;
+      line-height:1.35;
+    }
+    .pill{display:inline-block;padding:5px 10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;font-size:12px;color:#d8e6ff;background:rgba(0,0,0,.22)}
+  </style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img src="/public/synaptics-logo.svg" alt="Synaptics.Systems"/>
+    <div>
+      <div style="font-weight:800">NDSP Genesis • Seconds Console</div>
+      <div class="meta">View the invoice PDF, connect to metering, and monitor NDSP state.</div>
+    </div>
+  </div>
+  <div class="meta" id="clock"></div>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: PDF / Invoice viewer -->
+  <div class="panel">
+    <div class="card">
+      <h2>Document Viewer</h2>
+      <div class="row">
+        <label>Load PDF</label>
+        <input type="file" id="pdfFile" accept="application/pdf"/>
+        <span class="status" id="pdfStatus">No PDF loaded</span>
+      </div>
+      <div style="height:10px"></div>
+      <iframe class="viewer" id="pdfFrame" title="PDF Viewer"></iframe>
+      <div style="height:10px"></div>
+      <div class="row">
+        <span class="pill">Tip</span>
+        <span class="status">Upload your exported invoice PDF here to view it inside the console.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Invoice HTML (Auto-fill)</h2>
+      <div class="row">
+        <a class="pill" href="/templates/Invoice.html" target="_blank" rel="noreferrer">Open Invoice.html</a>
+        <span class="status">Use the top bar in Invoice.html to autofill Qty from session seconds.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Metering + NDSP monitor -->
+  <div class="panel">
+    <div class="card">
+      <h2>Connection</h2>
+      <div class="row">
+        <label>API Base</label>
+        <input id="apiBase" placeholder="http://localhost:8080"/>
+        <label>API Key</label>
+        <input id="apiKey" placeholder="x-api-key"/>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <button id="btnPing">Ping</button>
+        <span class="status" id="connStatus"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Seconds Metering</h2>
+      <div class="row">
+        <button class="primary" id="btnNewSession">New Session</button>
+        <label>Session</label>
+        <input id="sessionId" placeholder="sess_..."/>
+        <button class="danger" id="btnClose">Close</button>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <label>Billable Item</label>
+        <select id="itemSelect"></select>
+        <button id="btnStart">Start</button>
+        <button id="btnStop">Stop</button>
+      </div>
+      <div style="height:10px"></div>
+      <div class="grid2">
+        <div class="kpi">
+          <div class="v" id="kpiSeconds">0</div>
+          <div class="l">Seconds (active session total)</div>
+        </div>
+        <div class="kpi">
+          <div class="v" id="kpiQty">0</div>
+          <div class="l">Tracked quantity</div>
+        </div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="grid2">
+        <div class="kpi">
+          <div class="v" id="kpiTotal">$0.00</div>
+          <div class="l">Total (from summary)</div>
+        </div>
+        <div class="kpi">
+          <div class="v"><a href="/genesis" target="_blank" rel="noreferrer" style="color:inherit;text-decoration:none">Open</a></div>
+          <div class="l">Genesis activity page</div>
+        </div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <button class="primary" id="btnAutoTick">Auto Heartbeat (1s)</button>
+        <button id="btnTickOnce">+1 second</button>
+        <button class="primary" id="btnInvoiceJson">Generate Invoice JSON</button>
+      </div>
+      <div style="height:10px"></div>
+      <div class="status" id="meterStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>NDSP Genesis Monitor</h2>
+      <div class="row">
+        <button id="btnNdspPull">Pull /ndsp/state</button>
+        <button id="btnNdspSend">Send /ndsp/telemetry</button>
+        <span class="status" id="ndspStatus"></span>
+      </div>
+      <div style="height:10px"></div>
+      <pre id="ndspOut">{}</pre>
+    </div>
+
+    <div class="card">
+      <h2>Session Summary</h2>
+      <pre id="summaryOut">Create a session to see summary.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = (id)=>document.getElementById(id);
+  const clock = ()=> $("clock").textContent = new Date().toLocaleString();
+  setInterval(clock, 1000); clock();
+
+  function loadCfg(){
+    $("apiBase").value = localStorage.getItem("syn_apiBase") || location.origin;
+    $("apiKey").value = localStorage.getItem("syn_apiKey") || "";
+    $("sessionId").value = localStorage.getItem("syn_sessionId") || "";
+  }
+  function saveCfg(){
+    localStorage.setItem("syn_apiBase", $("apiBase").value.trim());
+    localStorage.setItem("syn_apiKey", $("apiKey").value.trim());
+    localStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+  }
+
+  async function api(path, opts){
+    const base = $("apiBase").value.trim().replace(/\/+$/,"");
+    const key = $("apiKey").value.trim();
+    if(!base) throw new Error("Missing API Base");
+    if(!key) throw new Error("Missing API Key");
+    const res = await fetch(base + path, {
+      ...opts,
+      headers: { "content-type":"application/json", "x-api-key": key, ...(opts && opts.headers ? opts.headers : {}) }
+    });
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw new Error(data?.error || ("HTTP " + res.status));
+    return data;
+  }
+
+  function status(id, msg){ $(id).textContent = msg || ""; }
+
+  async function refreshCatalog(){
+    const c = await api("/catalog", { method:"GET" });
+    const sel = $("itemSelect");
+    sel.innerHTML = "";
+    (c.items || []).forEach(it=>{
+      const opt = document.createElement("option");
+      opt.value = it.id;
+      opt.textContent = `${it.label} — $${(it.unit_price_cents/100).toFixed(2)}/sec`;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function pullSummary(){
+    const sid = $("sessionId").value.trim();
+    if(!sid) return;
+    const s = await api("/sessions/" + encodeURIComponent(sid) + "/summary", { method:"GET" });
+    $("summaryOut").textContent = JSON.stringify(s, null, 2);
+    const totalSeconds = (s.lines||[]).reduce((a,l)=>a+(l.seconds||0),0);
+    $("kpiSeconds").textContent = String(totalSeconds);
+    $("kpiQty").textContent = String(s.metrics?.tracked_quantity || 0);
+    $("kpiTotal").textContent = "$" + (Number(s.total.amount||0)).toFixed(2);
+  }
+
+  let hbTimer = null;
+  async function tickOnce(){
+    const sid = $("sessionId").value.trim();
+    if(!sid) throw new Error("Missing session");
+    await api("/sessions/" + encodeURIComponent(sid) + "/heartbeat", { method:"POST", body: JSON.stringify({ seconds: 1 }) });
+    await pullSummary();
+  }
+
+  function setAuto(on){
+    if(on){
+      if(hbTimer) return;
+      hbTimer = setInterval(()=> tickOnce().catch(e=>status("meterStatus","Error: "+e.message)), 1000);
+      $("btnAutoTick").textContent = "Auto Heartbeat: ON";
+    }else{
+      if(hbTimer) clearInterval(hbTimer);
+      hbTimer = null;
+      $("btnAutoTick").textContent = "Auto Heartbeat (1s)";
+    }
+  }
+
+  // PDF upload viewer
+  $("pdfFile").addEventListener("change", (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const url = URL.createObjectURL(f);
+    $("pdfFrame").src = url;
+    $("pdfStatus").textContent = f.name + " loaded";
+  });
+
+  // buttons
+  $("btnPing").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const h = await fetch($("apiBase").value.trim().replace(/\/+$/,"") + "/health");
+      const j = await h.json();
+      status("connStatus", j.ok ? "Connected" : "Not OK");
+      await refreshCatalog();
+    }catch(e){
+      status("connStatus","Error: " + e.message);
+    }
+  });
+
+  $("btnNewSession").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const r = await api("/sessions", { method:"POST", body: JSON.stringify({}) });
+      $("sessionId").value = r.id;
+      saveCfg();
+      status("meterStatus","Session created: " + r.id);
+      await refreshCatalog();
+      await pullSummary();
+    }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnStart").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const sid = $("sessionId").value.trim();
+      const item = $("itemSelect").value;
+      await api("/sessions/" + encodeURIComponent(sid) + "/start", { method:"POST", body: JSON.stringify({ item_id: item }) });
+      status("meterStatus","Started item: " + item);
+    }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnStop").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const sid = $("sessionId").value.trim();
+      await api("/sessions/" + encodeURIComponent(sid) + "/stop", { method:"POST", body: JSON.stringify({}) });
+      status("meterStatus","Stopped active item");
+    }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnClose").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      setAuto(false);
+      const sid = $("sessionId").value.trim();
+      await api("/sessions/" + encodeURIComponent(sid) + "/close", { method:"POST", body: JSON.stringify({}) });
+      status("meterStatus","Session closed");
+      await pullSummary();
+    }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnTickOnce").addEventListener("click", ()=> tickOnce().catch(e=>status("meterStatus","Error: "+e.message)));
+  $("btnAutoTick").addEventListener("click", ()=> setAuto(!hbTimer));
+
+  $("btnInvoiceJson").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const sid = $("sessionId").value.trim();
+      const payload = await api("/invoices/from-session", { method:"POST", body: JSON.stringify({ session_id: sid }) });
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "synaptics-invoice-" + sid + ".json";
+      document.body.appendChild(a);
+      a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      status("meterStatus","Invoice JSON generated.");
+    }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnNdspPull").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const r = await api("/ndsp/state", { method:"GET" });
+      $("ndspOut").textContent = JSON.stringify(r, null, 2);
+      status("ndspStatus","Pulled state");
+    }catch(e){ status("ndspStatus","Error: "+e.message); }
+  });
+
+  $("btnNdspSend").addEventListener("click", async ()=>{
+    try{
+      saveCfg();
+      const payload = {
+        ts: new Date().toISOString(),
+        session_id: $("sessionId").value.trim() || null,
+        note: "seconds-monitor",
+        channels: { c_load: Math.random(), s_var: Math.random(), circ_drift: Math.random() }
+      };
+      const r = await api("/ndsp/telemetry", { method:"POST", body: JSON.stringify(payload) });
+      $("ndspOut").textContent = JSON.stringify(r, null, 2);
+      status("ndspStatus","Telemetry sent");
+    }catch(e){ status("ndspStatus","Error: "+e.message); }
+  });
+
+  // init
+  loadCfg();
+  // best effort catalog
+  if($("apiKey").value.trim()){
+    $("btnPing").click();
+  }
+})();
+</script>
+</body>
+</html>

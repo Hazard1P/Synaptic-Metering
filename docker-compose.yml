@@ -1,0 +1,15 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATABASE_PATH=/app/data/app.db
+      - API_KEYS=${API_KEYS:-dev-key-1}
+      - INVOICE_TEMPLATE_PATH=/app/templates/Invoice.html
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8080}
+    volumes:
+      - ./data:/app/data
+      - ./templates:/app/templates:ro
+    restart: unless-stopped

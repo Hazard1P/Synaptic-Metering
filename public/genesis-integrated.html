@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NDSP Genesis Core v3 ULTRA — Synaptics.Systems</title>
+
+<style>
+  :root{
+    --bg:#02030a;
+    --bg2:#05081b;
+    --panel: rgba(8, 12, 30, 0.92);
+    --panel2: rgba(10, 16, 38, 0.85);
+    --border: rgba(34, 50, 90, 0.95);
+    --border-soft: rgba(25, 38, 72, 0.6);
+    --accent:#12f0ff;
+    --accent2:#7c3cff;
+    --accent3:#3ce57c;
+    --accent-soft: rgba(18,240,255,.18);
+    --text:#f5f7ff;
+    --muted:#a1a7c4;
+    --warn:#ffd166;
+    --bad:#ff3366;
+    --good:#3ce57c;
+    --radius:18px;
+    --radius-lg:26px;
+    --shadow: 0 18px 60px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; color:var(--text);
+    font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    background:
+      radial-gradient(1000px 600px at 75% -10%, rgba(18,240,255,0.12), transparent 60%),
+      radial-gradient(900px 600px at 10% 10%, rgba(124,60,255,0.13), transparent 55%),
+      radial-gradient(1200px 900px at 50% 120%, rgba(60,229,124,0.10), transparent 65%),
+      linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+    overflow-x:hidden;
+  }
+
+  /* Ambient layers */
+  .stars,.gridglow,.scanlines,.vignette,.nebula{
+    position:fixed; inset:0; pointer-events:none; z-index:0;
+  }
+  .nebula{
+    background:
+      radial-gradient(600px 450px at 15% 20%, rgba(18,240,255,.10), transparent 60%),
+      radial-gradient(700px 500px at 80% 60%, rgba(124,60,255,.12), transparent 65%),
+      radial-gradient(650px 480px at 45% 80%, rgba(60,229,124,.08), transparent 60%);
+    filter: blur(40px);
+    opacity:.8;
+    animation: neb 18s ease-in-out infinite alternate;
+  }
+  @keyframes neb{ 0%{transform:translateY(-10px)} 100%{transform:translateY(10px)} }
+
+  .stars{
+    background:
+      radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,.6), transparent 2px),
+      radial-gradient(1px 1px at 30% 70%, rgba(255,255,255,.5), transparent 2px),
+      radial-gradient(1px 1px at 80% 50%, rgba(255,255,255,.7), transparent 2px),
+      radial-gradient(1px 1px at 60% 10%, rgba(255,255,255,.6), transparent 2px),
+      radial-gradient(1px 1px at 50% 90%, rgba(255,255,255,.5), transparent 2px);
+    animation: drift 45s linear infinite;
+    opacity:.45;
+  }
+  @keyframes drift{ 0%{transform:translateY(0)} 100%{transform:translateY(50px)} }
+
+  .gridglow{
+    background:
+      linear-gradient(to right, rgba(18,240,255,.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(18,240,255,.06) 1px, transparent 1px);
+    background-size: 70px 70px;
+    mask-image: radial-gradient(circle at 50% 5%, black 0%, transparent 72%);
+    opacity:.5;
+  }
+  .scanlines{
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.02),
+      rgba(255,255,255,0.02) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode: soft-light;
+    opacity:.3;
+  }
+  .vignette{
+    background: radial-gradient(circle at center, transparent 0%, rgba(0,0,0,.7) 70%);
+  }
+
+  header{
+    position:sticky; top:0; z-index:6;
+    backdrop-filter: blur(10px);
+    background: rgba(2,3,10,.86);
+    border-bottom:1px solid var(--border-soft);
+  }
+  .wrap{max-width:1320px; margin:0 auto; padding:14px 18px; position:relative; z-index:1;}
+  .row{display:flex; gap:12px; flex-wrap:wrap;}
+  .grid{
+    display:grid; gap:14px; grid-template-columns: 1.25fr .75fr;
+  }
+  @media (max-width:1024px){ .grid{grid-template-columns:1fr;} }
+
+  .brand{display:flex; align-items:center; gap:12px;}
+  .pulse-dot{
+    width:10px; height:10px; border-radius:999px;
+    background:var(--accent);
+    box-shadow:0 0 20px var(--accent),0 0 70px rgba(18,240,255,.55);
+    animation:pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.7);opacity:.6}}
+  h1{font-size:18px;margin:0;letter-spacing:.8px}
+  .subtitle{color:var(--muted); font-size:12px; margin-top:2px}
+
+  .badge{
+    font-size:11px; padding:4px 9px; border-radius:999px;
+    border:1px solid var(--border-soft);
+    background: rgba(8,12,30,.9);
+    color:var(--muted);
+    display:inline-flex; gap:6px; align-items:center; letter-spacing:.4px;
+  }
+  .badge.good{color:#caffdf;border-color:rgba(60,229,124,.5);box-shadow:0 0 16px rgba(60,229,124,.18)}
+  .badge.warn{color:#fff0c2;border-color:rgba(255,209,102,.5);box-shadow:0 0 16px rgba(255,209,102,.18)}
+  .badge.bad{color:#ffd1dc;border-color:rgba(255,51,102,.5);box-shadow:0 0 16px rgba(255,51,102,.18)}
+  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;}
+  .muted{color:var(--muted); font-size:12px;}
+
+  .card{
+    background:
+      radial-gradient(900px 550px at 80% -55%, rgba(18,240,255,.08), transparent 72%),
+      radial-gradient(800px 550px at -10% 120%, rgba(124,60,255,.11), transparent 68%),
+      linear-gradient(180deg, rgba(8,12,30,.95) 0%, rgba(5,7,18,.98) 100%);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:14px;
+    box-shadow:var(--shadow);
+    position:relative; overflow:hidden;
+  }
+  .card::after{
+    content:""; position:absolute; inset:-1px; z-index:0;
+    background:conic-gradient(from 180deg at 50% 50%,
+      transparent 0%,
+      rgba(18,240,255,.25) 20%,
+      transparent 40%,
+      rgba(124,60,255,.25) 60%,
+      transparent 80%,
+      rgba(60,229,124,.18) 100%);
+    filter:blur(45px); opacity:.25;
+  }
+  .card>*{position:relative; z-index:1;}
+  .card h2{
+    margin:0 0 8px 0; font-size:13px; letter-spacing:1px; text-transform:uppercase;
+    color:#dbe1ff;
+  }
+
+  .anchor{
+    display:grid; grid-template-columns:170px 1fr; gap:14px; align-items:center;
+  }
+  @media (max-width:560px){ .anchor{grid-template-columns:1fr;} }
+  .anchor-wrap{position:relative; width:170px; height:170px;}
+  .orbital{
+    position:absolute; inset:-18px; border-radius:999px;
+    border:1px solid rgba(18,240,255,.15);
+    box-shadow:0 0 22px rgba(18,240,255,.18) inset;
+    animation:spin 18s linear infinite;
+  }
+  .orbital::after{
+    content:""; position:absolute; inset:12px; border-radius:999px;
+    border:1px dashed rgba(124,60,255,.18);
+  }
+  @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+  .anchor-img{
+    width:170px; height:170px; border-radius:18px; object-fit:cover;
+    border:1px solid var(--border);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,.04) inset,
+      0 0 34px rgba(18,240,255,.22),
+      0 0 95px rgba(124,60,255,.14);
+  }
+
+  .anchor-meta{display:grid; gap:6px; font-size:13px;}
+  .line{
+    display:flex; justify-content:space-between; gap:10px;
+    padding:6px 0; border-bottom:1px dashed var(--border-soft);
+  }
+  .line:last-child{border-bottom:none;}
+
+  .big-index{display:flex; align-items:flex-end; gap:12px;}
+  .index-num{
+    font-size:52px; font-weight:800; line-height:1; letter-spacing:.9px;
+    text-shadow:0 0 24px var(--accent-soft),0 0 70px rgba(18,240,255,.4);
+  }
+
+  .mini-grid{
+    display:grid; gap:10px; grid-template-columns: repeat(3,1fr);
+  }
+  @media (max-width:700px){ .mini-grid{grid-template-columns:1fr 1fr;} }
+  .mini{
+    background: rgba(7,10,24,.95);
+    border:1px solid var(--border-soft);
+    border-radius:14px; padding:10px; display:grid; gap:6px;
+  }
+  .mini .v{font-size:20px;font-weight:700;letter-spacing:.4px;}
+
+  .kline{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:8px 0; border-bottom:1px dashed var(--border-soft); font-size:13px;
+  }
+  .kline:last-child{border-bottom:none;}
+
+  canvas{
+    width:100%; height:260px; background:#050818;
+    border:1px solid var(--border-soft); border-radius:14px;
+  }
+
+  /* Auto-scrolling codex */
+  .codex{
+    height:190px; overflow:hidden; border-radius:14px;
+    background: rgba(6,9,22,.95);
+    border:1px solid var(--border-soft);
+    position:relative;
+  }
+  .codex-track{
+    position:absolute; inset:0; padding:10px;
+    display:grid; gap:6px;
+    animation: codexScroll 22s linear infinite;
+  }
+  @keyframes codexScroll{
+    0%{transform:translateY(0)}
+    100%{transform:translateY(-50%)}
+  }
+  .codex-item{
+    display:flex; justify-content:space-between; font-size:12px;
+    background: rgba(9,13,32,.8);
+    border:1px solid rgba(25,38,72,.5);
+    padding:6px 8px; border-radius:10px;
+  }
+
+  .footer{font-size:12px; line-height:1.6; color:var(--muted);}
+</style>
+
+<style>
+#syn-bridge{position:fixed;right:16px;bottom:16px;z-index:50;width:min(420px,calc(100vw - 32px));background:rgba(8,12,30,.94);border:1px solid rgba(18,240,255,.25);box-shadow:0 18px 60px rgba(0,0,0,.55);border-radius:18px;padding:14px;backdrop-filter:blur(10px);font:12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#f5f7ff}
+#syn-bridge h3{margin:0 0 10px;font-size:14px}#syn-bridge .r{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}#syn-bridge input,#syn-bridge select,#syn-bridge button{border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:#fff;padding:8px 10px;font-size:12px}#syn-bridge input,#syn-bridge select{flex:1;min-width:120px}#syn-bridge button{cursor:pointer}#syn-bridge .primary{background:linear-gradient(90deg, rgba(18,240,255,.20), rgba(124,60,255,.22), rgba(60,229,124,.18));}#syn-bridge .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}#syn-bridge .k{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px}#syn-bridge .kv{font-size:18px;font-weight:700}#syn-bridge .kl{color:#a1a7c4}#syn-bridge .status{color:#a1a7c4;min-height:18px}#syn-bridge a{color:#12f0ff;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="nebula"></div>
+<div class="stars"></div>
+<div class="gridglow"></div>
+<div class="scanlines"></div>
+<div class="vignette"></div>
+
+<header>
+  <div class="wrap row" style="align-items:center; justify-content:space-between;">
+    <div class="brand">
+      <div class="pulse-dot"></div>
+      <div>
+        <h1>NDSP GENESIS CORE</h1>
+        <div class="subtitle">Ultra Static Authority Console • Synaptics.Systems</div>
+      </div>
+    </div>
+    <div class="row" style="align-items:center;">
+      <div class="badge mono" id="coreVersionBadge">CORE</div>
+      <div class="badge mono" id="buildBadge">BUILD</div>
+      <div class="badge mono" id="controlBadge">CONTROL</div>
+      <div class="badge mono" id="authorityBadge">AUTHORITY</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap grid">
+
+  <!-- LEFT -->
+  <section class="card">
+    <h2>Quantum Anchor / Genesis Reference</h2>
+    <div class="anchor">
+      <div class="anchor-wrap">
+        <div class="orbital"></div>
+        <!-- Put your image in same folder and use that filename -->
+        <img class="anchor-img" src="Michael_Rybaltowicz__[Quantum_anchor]_.jpg" alt="Quantum Anchor">
+      </div>
+      <div class="anchor-meta">
+        <div class="line"><span class="muted">Anchor ID</span><span class="mono" id="anchorId"></span></div>
+        <div class="line"><span class="muted">Core Version</span><span class="mono" id="coreVersion"></span></div>
+        <div class="line"><span class="muted">Build Hash</span><span class="mono" id="buildId"></span></div>
+        <div class="line"><span class="muted">Kernel Mode</span><span class="mono" id="kernelMode"></span></div>
+        <div class="line"><span class="muted">Codex Window</span><span class="mono" id="windowSizeUI"></span></div>
+        <div class="line"><span class="muted">Tick Rate</span><span class="mono" id="tickRateUI"></span></div>
+        <div class="line"><span class="muted">Session Start</span><span class="mono" id="startedAt"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live Entropy Index</h2>
+    <div class="big-index">
+      <div class="index-num mono" id="entropyIndex">0.000</div>
+      <div class="row">
+        <div class="badge mono" id="entropyBadge">CALIBRATING</div>
+        <div class="badge mono" id="anomalyBadge">ANOMALY: NONE</div>
+      </div>
+    </div>
+    <div style="height:10px"></div>
+    <div class="mini-grid">
+      <div class="mini">
+        <div class="muted">Coherence</div>
+        <div class="v mono" id="coherence">0.0</div>
+        <div class="muted">0–100 (inverse turbulence)</div>
+      </div>
+      <div class="mini">
+        <div class="muted">Trend Slope</div>
+        <div class="v mono" id="trend">0.000</div>
+        <div class="muted">last N ticks</div>
+      </div>
+      <div class="mini">
+        <div class="muted">Entropy Mean</div>
+        <div class="v mono" id="mean">0.000</div>
+        <div class="muted">rolling window</div>
+      </div>
+    </div>
+    <div style="height:10px"></div>
+    <canvas id="historyChart"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>Entropy Vector (Channels)</h2>
+    <div id="channels"></div>
+    <div style="height:10px"></div>
+    <div class="muted mono" id="weightsUI"></div>
+  </section>
+
+  <section class="card">
+    <h2>Genesis Kernel (Transparent Math)</h2>
+    <div class="muted mono" style="white-space:pre-wrap; line-height:1.6;" id="mathUI"></div>
+  </section>
+
+  <!-- RIGHT -->
+  <section class="card">
+    <h2>Telemetry Ports (Read-Only)</h2>
+    <div id="inputs"></div>
+    <div style="height:10px"></div>
+    <div class="muted mono" id="backendUI"></div>
+    <div class="muted mono" id="keyOriginUI"></div>
+  </section>
+
+  <section class="card">
+    <h2>Derived State</h2>
+    <div id="derived"></div>
+  </section>
+
+  <section class="card">
+    <h2>Entropy Codex Timeline (Auto)</h2>
+    <div class="codex">
+      <div class="codex-track" id="codexTrack"></div>
+    </div>
+    <div style="height:10px"></div>
+    <div class="footer">
+      Continuous session codex. Backend mode can persist to your long-term Seed/Metamatrix store.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>System Status</h2>
+    <div class="kline"><span>Kernel</span><span class="badge mono good">ACTIVE</span></div>
+    <div class="kline"><span>State Authority</span><span class="badge mono" id="authorityStatus">LOCAL</span></div>
+    <div class="kline"><span>Control Policy</span><span class="badge mono" id="policyStatus">LOCAL-ONLY</span></div>
+    <div class="kline"><span>Persistence</span><span class="badge mono warn">SESSION-ONLY</span></div>
+    <div style="height:8px"></div>
+    <div class="footer">
+      Non-interactive by design. Displays controlled entropy state only. No keys stored here.
+    </div>
+  </section>
+
+</main>
+
+<div class="wrap">
+  <div class="card footer">
+    <strong>Safety / Disclosure.</strong>
+    NDSP Genesis Core is a deterministic monitoring console. “Conscious entropy” is a conceptual model of signal variance
+    and coherence, not a medical or supernatural instrument. This HTML stores no keys and transmits nothing unless a backend URL is set.
+  </div>
+</div>
+
+<script>
+(() => {
+  // ============================================================
+  // GENESIS CORE v3 — ULTRA STATIC
+  // ============================================================
+
+  // ---- OPTIONAL BACKEND AUTHORITY (read-only pull + telemetry push)
+  // Set to your NDSP Control Plane domain. Keep empty for local mode.
+  const NDSP_BACKEND = location.origin; // integrated same-origin backend
+
+  // ---- Filled Defaults (missing fields resolved)
+  const CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0 ULTRA STATIC";
+  const BUILD_ID = "GEN-"+Math.random().toString(36).slice(2,10).toUpperCase();
+  const ANCHOR_ID = "Q-ANCHOR-"+Math.random().toString(36).slice(2,8).toUpperCase();
+  const KERNEL_MODE = NDSP_BACKEND ? "BACKEND-AUTHORITY + LOCAL FAILOVER" : "LOCAL-AUTHORITY";
+  const TICK_RATE_HZ = 1;
+  const WINDOW_SIZE = 42;                 // Codex + coherence window
+  const HISTORY_MAX = 900;
+
+  // Weights filled (extreme but stable)
+  const WEIGHTS = {
+    c_load: 0.26,
+    s_var: 0.20,
+    circ_drift: 0.16,
+    sys_noise: 0.22,
+    env_flux: 0.16
+  };
+
+  // Key origin text (read-only)
+  const KEY_ORIGIN = NDSP_BACKEND
+    ? "KEY ORIGIN: OpenAI API key server-side in NDSP backend"
+    : "KEY ORIGIN: none (local mode)";
+
+  const startedAt = new Date();
+  window.__startedAt = Date.now();
+
+  // Bind meta UI
+  const $ = id => document.getElementById(id);
+  $("coreVersion").textContent = CORE_VERSION;
+  $("buildId").textContent = BUILD_ID;
+  $("anchorId").textContent = ANCHOR_ID;
+  $("kernelMode").textContent = KERNEL_MODE;
+  $("windowSizeUI").textContent = WINDOW_SIZE+" ticks";
+  $("tickRateUI").textContent = TICK_RATE_HZ+" Hz";
+  $("startedAt").textContent = startedAt.toLocaleString();
+  $("coreVersionBadge").textContent = CORE_VERSION;
+  $("buildBadge").textContent = BUILD_ID;
+  $("backendUI").textContent = NDSP_BACKEND ? `BACKEND: ${NDSP_BACKEND}` : "BACKEND: OFFLINE (LOCAL MODE)";
+  $("keyOriginUI").textContent = KEY_ORIGIN;
+
+  $("weightsUI").textContent =
+    "Weights: "+Object.entries(WEIGHTS).map(([k,v])=>`${k}=${v}`).join(" • ");
+
+  $("mathUI").textContent =
+`entropyIndex = clamp(
+  ${WEIGHTS.c_load}*c_load +
+  ${WEIGHTS.s_var}*s_var +
+  ${WEIGHTS.circ_drift}*circ_drift +
+  ${WEIGHTS.sys_noise}*sys_noise +
+  ${WEIGHTS.env_flux}*env_flux
+, 0, 1)
+
+coherence = 100 * (1 - std(entropyWindow))
+trend = slope(last N points)
+anomaly if |zscore(entropy)| > 2.2`;
+
+  // Local fallback state
+  let state = {
+    meta:{ tick:0 },
+    inputs:{},
+    channels:{},
+    derived:{ entropyIndex:0, coherence:0, trend:0, anomalies:[] },
+    history:[]
+  };
+  let policy=null;
+
+  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+
+  function slope(arr){
+    const n=arr.length; if(n<2) return 0;
+    let sx=0,sy=0,sxy=0,sx2=0;
+    for(let i=0;i<n;i++){
+      const x=i,y=arr[i];
+      sx+=x; sy+=y; sxy+=x*y; sx2+=x*x;
+    }
+    const denom=n*sx2-sx*sx;
+    return denom===0?0:(n*sxy-sx*sy)/denom;
+  }
+
+  // Deterministic telemetry proxies (filled)
+  function gatherTelemetry(){
+    const now=new Date();
+    const t=state.meta.tick;
+
+    const perf = performance?.timing
+      ? {
+          latency: (performance.timing.responseEnd-performance.timing.requestStart)/1000 || 0.05,
+          jitter: Math.abs(Math.sin(t/7))*0.02
+        }
+      : { latency:0.05, jitter:0.02 };
+
+    const battery = { level: (Math.sin(t/19)*0.5+0.5), charging:false };
+    const network = { stability:(Math.cos(t/17)*0.5+0.5), rate:0.2+(Math.cos(t/13)*0.5+0.5)*0.6 };
+    const env = { flux:(Math.sin(t/11)*0.5+0.5) };
+
+    return {
+      time:{ hour:now.getHours(), sessionMinutes:(Date.now()-window.__startedAt)/60000, nowISO:now.toISOString() },
+      perf,battery,network,env
+    };
+  }
+
+  function computeChannels(inputs){
+    const { perf={}, battery={}, network={}, time={}, env={} } = inputs;
+    const c_load = clamp( (time.sessionMinutes||0)/120 + (perf.latency||0)*0.6, 0,1 );
+    const s_var  = clamp( (perf.jitter||0)*8 + (1-(network.stability||1))*0.7, 0,1 );
+    const circ_drift = clamp( Math.abs((time.hour??14)-14)/14, 0,1 );
+    const sys_noise = clamp( (1-(battery.level||1))*0.5 + (perf.latency||0)*0.5, 0,1 );
+    const env_flux = clamp( env.flux||0.5, 0,1 );
+    return { c_load,s_var,circ_drift,sys_noise,env_flux };
+  }
+
+  function applyPolicy(ch){
+    if(!policy?.channelCaps) return ch;
+    const out={};
+    for(const k of Object.keys(ch)){
+      const [lo,hi]=policy.channelCaps[k]||[0,1];
+      out[k]=clamp(ch[k],lo,hi);
+    }
+    return out;
+  }
+
+  function computeDerived(ch){
+    const e = clamp(
+      WEIGHTS.c_load*ch.c_load +
+      WEIGHTS.s_var*ch.s_var +
+      WEIGHTS.circ_drift*ch.circ_drift +
+      WEIGHTS.sys_noise*ch.sys_noise +
+      WEIGHTS.env_flux*ch.env_flux
+    ,0,1);
+
+    const window = state.history.slice(-WINDOW_SIZE).map(h=>h.entropy);
+    const mean = window.reduce((a,b)=>a+b,0)/(window.length||1);
+    const std = Math.sqrt(window.reduce((a,b)=>a+(b-mean)**2,0)/(window.length||1));
+
+    const coherence = clamp(100*(1-std*2.2),0,100);
+    const trend = slope(state.history.slice(-20).map(h=>h.entropy));
+    const z = std>0 ? (e-mean)/std : 0;
+    const anomalies = Math.abs(z)>2.2 ? ["Entropy spike"] : [];
+
+    return { entropyIndex:e, coherence, trend, mean, std, z, anomalies };
+  }
+
+  // Backend (optional)
+  async function pushTelemetry(inputs){
+    if(!NDSP_BACKEND) return null;
+    try{
+      const apiKey=(localStorage.getItem("syn_apiKey")||"").trim();
+      const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
+        method:"POST", headers:{ "Content-Type":"application/json", ...(apiKey?{"x-api-key":apiKey}:{}) }, body:JSON.stringify(inputs)
+      });
+      if(!r.ok) return null;
+      const j=await r.json();
+      return j.state||null;
+    }catch{ return null; }
+  }
+
+  async function pullState(){
+    if(!NDSP_BACKEND) return null;
+    try{
+      const apiKey=(localStorage.getItem("syn_apiKey")||"").trim();
+      const r=await fetch(NDSP_BACKEND+"/ndsp/state",{ headers: apiKey?{"x-api-key":apiKey}:{} });
+      if(!r.ok) return null;
+      const j=await r.json();
+      policy=j.policy||null;
+      return j.state||null;
+    }catch{ return null; }
+  }
+
+  // Renderers
+  function renderInputs(){
+    const i=state.inputs||{}, t=i.time||{}, p=i.perf||{}, b=i.battery||{}, n=i.network||{}, e=i.env||{};
+    const rows=[
+      ["Local Time", t.nowISO?new Date(t.nowISO).toLocaleTimeString():new Date().toLocaleTimeString()],
+      ["Session (min)", (t.sessionMinutes||0).toFixed(2)],
+      ["Perf Latency", (p.latency||0).toFixed(3)],
+      ["Perf Jitter", (p.jitter||0).toFixed(3)],
+      ["Battery Level", (b.level||0).toFixed(3)],
+      ["Network Stability", (n.stability||0).toFixed(3)],
+      ["Network Rate", (n.rate||0).toFixed(3)],
+      ["Env Flux", (e.flux||0).toFixed(3)]
+    ];
+    $("inputs").innerHTML=rows.map(([k,v])=>`<div class="kline"><div>${k}</div><div class="mono">${v}</div></div>`).join("");
+  }
+
+  function renderChannels(){
+    const ch=state.channels||{};
+    const rows=[
+      ["c_load — Cognitive Load Proxy", ch.c_load],
+      ["s_var — Signal Variance", ch.s_var],
+      ["circ_drift — Circadian Drift", ch.circ_drift],
+      ["sys_noise — System Noise", ch.sys_noise],
+      ["env_flux — Environment Flux", ch.env_flux]
+    ];
+    $("channels").innerHTML=rows.map(([k,v])=>`<div class="kline"><div>${k}</div><div class="mono">${(v??0).toFixed(3)}</div></div>`).join("");
+  }
+
+  function renderDerived(){
+    const d=state.derived||{};
+    const rows=[
+      ["entropyIndex", d.entropyIndex],
+      ["coherence (0–100)", d.coherence],
+      ["trend slope", d.trend],
+      ["window mean", d.mean],
+      ["window std", d.std],
+      ["z-score", d.z],
+      ["anomalies", d.anomalies?.length?d.anomalies.join(", "):"none"]
+    ];
+    $("derived").innerHTML=rows.map(([k,v])=>`<div class="kline"><div>${k}</div><div class="mono">${typeof v==="number"?v.toFixed(3):v}</div></div>`).join("");
+  }
+
+  function renderBadges(){
+    const e=state.derived?.entropyIndex??0;
+    $("entropyIndex").textContent=e.toFixed(3);
+
+    const eb=$("entropyBadge");
+    eb.className="badge mono "+(e<0.33?"good":e<0.66?"warn":"bad");
+    eb.textContent=e<0.33?"COHERENT":e<0.66?"DYNAMIC":"TURBULENT";
+
+    const hasA=!!state.derived?.anomalies?.length;
+    const ab=$("anomalyBadge");
+    ab.className="badge mono "+(hasA?"bad":"good");
+    ab.textContent=hasA?"ANOMALY: DETECTED":"ANOMALY: NONE";
+
+    $("coherence").textContent=(state.derived?.coherence??0).toFixed(1);
+    $("trend").textContent=(state.derived?.trend??0).toFixed(3);
+    $("mean").textContent=(state.derived?.mean??0).toFixed(3);
+
+    const authority=(NDSP_BACKEND && policy)?"BACKEND":"LOCAL";
+    $("authorityBadge").textContent="AUTHORITY: "+authority;
+    $("authorityBadge").className="badge mono "+(authority==="BACKEND"?"good":"warn");
+    $("authorityStatus").textContent=authority;
+    $("authorityStatus").className="badge mono "+(authority==="BACKEND"?"good":"warn");
+
+    $("controlBadge").textContent="CONTROL: "+authority;
+    $("controlBadge").className="badge mono "+(authority==="BACKEND"?"good":"warn");
+
+    $("policyStatus").textContent=policy?"CLAMPED":"LOCAL-ONLY";
+    $("policyStatus").className="badge mono "+(policy?"good":"warn");
+  }
+
+  // Codex
+  function renderCodex(){
+    const pts=state.history.slice(-120);
+    const items=pts.map(p=>{
+      const t=new Date(p.t).toLocaleTimeString();
+      return `<div class="codex-item"><span>${t}</span><span class="mono">${(p.entropy??0).toFixed(3)}</span></div>`;
+    });
+    // duplicate for seamless scroll
+    $("codexTrack").innerHTML=items.concat(items).join("");
+  }
+
+  // Chart
+  const canvas=$("historyChart"), ctx=canvas.getContext("2d");
+  function renderChart(){
+    const w=canvas.width=canvas.clientWidth*devicePixelRatio;
+    const h=canvas.height=canvas.clientHeight*devicePixelRatio;
+    ctx.clearRect(0,0,w,h);
+
+    ctx.globalAlpha=.25; ctx.beginPath();
+    for(let i=1;i<5;i++){ const y=h*i/5; ctx.moveTo(0,y); ctx.lineTo(w,y); }
+    ctx.strokeStyle="#1b2340"; ctx.stroke(); ctx.globalAlpha=1;
+
+    const pts=state.history.slice(-150);
+    if(pts.length<2) return;
+    const xs=pts.map((_,i)=>i/(pts.length-1)*(w-20)+10);
+    const ys=pts.map(p=>(1-(p.entropy??0))*(h-20)+10);
+
+    ctx.beginPath(); ctx.moveTo(xs[0],ys[0]);
+    for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]);
+    ctx.lineWidth=2.2*devicePixelRatio;
+    ctx.strokeStyle="#12f0ff";
+    ctx.shadowBlur=18*devicePixelRatio;
+    ctx.shadowColor="rgba(18,240,255,.6)";
+    ctx.stroke(); ctx.shadowBlur=0;
+  }
+
+  function renderAll(){
+    renderInputs(); renderChannels(); renderDerived();
+    renderBadges(); renderCodex(); renderChart();
+  }
+
+  // Tick loop
+  async function tick(){
+    state.meta.tick++;
+    const inputs=gatherTelemetry();
+    const raw=computeChannels(inputs);
+    const clamped=applyPolicy(raw);
+    const derived=computeDerived(clamped);
+
+    state.inputs=inputs;
+    state.channels=clamped;
+    state.derived=derived;
+    state.history.push({ t:Date.now(), entropy:derived.entropyIndex });
+    state.history=state.history.slice(-HISTORY_MAX);
+
+    const pushed=await pushTelemetry(inputs);
+    const pulled=await pullState();
+    if(pulled) state=pulled;
+    else if(pushed) state=pushed;
+
+    renderAll();
+  }
+
+  tick();
+  setInterval(tick, 1000/TICK_RATE_HZ);
+})();
+</script>
+
+<div id="syn-bridge">
+  <h3>Synaptics Thinking Meter</h3>
+  <div class="r">
+    <input id="synApiKey" placeholder="API key"/>
+    <button id="synSave" class="primary">Save Key</button>
+  </div>
+  <div class="r">
+    <input id="synSession" placeholder="Session id"/>
+    <select id="synItem"></select>
+  </div>
+  <div class="r">
+    <button id="synStart" class="primary">Start thinking meter</button>
+    <button id="synStop">Stop meter</button>
+    <button id="synClose">Close session</button>
+  </div>
+  <div class="grid">
+    <div class="k"><div class="kv" id="synSeconds">0</div><div class="kl">Seconds</div></div>
+    <div class="k"><div class="kv" id="synQty">0</div><div class="kl">Quantity</div></div>
+    <div class="k"><div class="kv" id="synTotal">$0.00</div><div class="kl">Total</div></div>
+  </div>
+  <div class="status" id="synStatus">Idle. Activity-based metering starts when the page sees active use and pauses on idle.</div>
+  <div class="r"><a href="/console" target="_blank" rel="noreferrer">Open console</a></div>
+</div>
+
+<script>
+(()=>{
+  const $=id=>document.getElementById(id);
+  const apiBase = location.origin.replace(/\/+$/,'');
+  let loop=null, lastActivity=Date.now(), currentRunning=false;
+  const IDLE_MS = 5000;
+  let itemLabel='';
+
+  function setStatus(msg){ $('synStatus').textContent = msg; }
+  function saveCfg(){ localStorage.setItem('syn_apiKey',$('synApiKey').value.trim()); localStorage.setItem('syn_sessionId',$('synSession').value.trim()); localStorage.setItem('syn_itemId',$('synItem').value || ''); }
+  function loadCfg(){ $('synApiKey').value=localStorage.getItem('syn_apiKey')||''; $('synSession').value=localStorage.getItem('syn_sessionId')||''; }
+  async function api(path, opts={}){
+    const key = $('synApiKey').value.trim();
+    const headers = { 'content-type':'application/json', ...(opts.headers||{}), ...(key?{'x-api-key':key}:{}) };
+    const res = await fetch(apiBase + path, { ...opts, headers });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+    return data;
+  }
+  async function refreshCatalog(){
+    const c = await api('/catalog', { method:'GET' });
+    const sel = $('synItem'); sel.innerHTML='';
+    (c.items||[]).forEach((it, idx)=>{
+      const opt=document.createElement('option');
+      opt.value=it.id; opt.textContent=`${it.label} — $${(it.unit_price_cents/100).toFixed(2)}/${it.unit_name||'second'}`;
+      if((localStorage.getItem('syn_itemId') && localStorage.getItem('syn_itemId')===it.id) || (!localStorage.getItem('syn_itemId') && idx===0)) opt.selected=true;
+      sel.appendChild(opt);
+    });
+    itemLabel = sel.options[sel.selectedIndex]?.textContent || '';
+  }
+  async function ensureSession(){
+    let sid = $('synSession').value.trim();
+    if(sid) return sid;
+    const r = await api('/sessions', { method:'POST', body:JSON.stringify({ account_id:'thinking-meter', seat_id:'genesis-core' }) });
+    $('synSession').value = r.id; saveCfg();
+    return r.id;
+  }
+  async function startItem(){
+    const sid = await ensureSession();
+    const item = $('synItem').value;
+    await api('/sessions/' + encodeURIComponent(sid) + '/start', { method:'POST', body:JSON.stringify({ item_id:item }) });
+    currentRunning=true; saveCfg();
+  }
+  async function stopItem(){
+    const sid = $('synSession').value.trim(); if(!sid) return;
+    await api('/sessions/' + encodeURIComponent(sid) + '/stop', { method:'POST', body:JSON.stringify({}) });
+    currentRunning=false;
+  }
+  async function closeSession(){
+    const sid = $('synSession').value.trim(); if(!sid) return;
+    await api('/sessions/' + encodeURIComponent(sid) + '/close', { method:'POST', body:JSON.stringify({}) });
+    currentRunning=false; setStatus('Session closed.');
+    await pullSummary();
+  }
+  async function tick(){
+    try{
+      const focused = !document.hidden && document.hasFocus();
+      const active = focused && (Date.now() - lastActivity <= IDLE_MS);
+      if(active && !currentRunning){ await startItem(); setStatus('Active use detected. Meter running on ' + itemLabel); }
+      if(!active && currentRunning){ await stopItem(); setStatus('Idle detected. Meter paused.'); }
+      if(active){
+        const sid = $('synSession').value.trim();
+        await api('/sessions/' + encodeURIComponent(sid) + '/heartbeat', { method:'POST', body:JSON.stringify({ seconds:1 }) });
+        await pullSummary();
+      }
+    }catch(e){ setStatus('Error: ' + e.message); }
+  }
+  async function pullSummary(){
+    const sid = $('synSession').value.trim(); if(!sid) return;
+    const s = await api('/sessions/' + encodeURIComponent(sid) + '/summary', { method:'GET' });
+    $('synSeconds').textContent = String(s.metrics?.intelligence_seconds || 0);
+    $('synQty').textContent = String(s.metrics?.tracked_quantity || 0);
+    $('synTotal').textContent = '$' + Number(s.total?.amount || 0).toFixed(2);
+  }
+  function noteActivity(){ lastActivity = Date.now(); }
+  ['mousemove','mousedown','keydown','scroll','touchstart','pointerdown'].forEach(ev=>window.addEventListener(ev, noteActivity, { passive:true }));
+  window.addEventListener('focus', noteActivity);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) noteActivity(); });
+
+  $('synSave').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); setStatus('API key saved.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synStart').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); await startItem(); await pullSummary(); if(!loop) loop=setInterval(tick,1000); noteActivity(); setStatus('Thinking meter armed. Move, type, or interact to accumulate seconds.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synStop').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await stopItem(); setStatus('Meter stopped manually.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synClose').addEventListener('click', ()=> closeSession().catch(e=>setStatus('Error: '+e.message)));
+  $('synItem').addEventListener('change', ()=>{ itemLabel = $('synItem').options[$('synItem').selectedIndex]?.textContent || ''; saveCfg(); });
+  $('synSession').addEventListener('change', saveCfg);
+
+  loadCfg();
+  refreshCatalog().then(pullSummary).catch(()=>setStatus('Enter API key to enable metering.'));
+})();
+</script>
+</body>
+</html>

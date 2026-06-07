@@ -1,0 +1,239 @@
+
+<!-- Synaptics.Systems Autofill + Invoice Generator (v1) -->
+<div id="synapticsControls" style="position:sticky;top:0;z-index:9999;background:linear-gradient(90deg, rgba(0,245,255,.16), rgba(124,77,255,.16), rgba(0,255,136,.14)), #0b0b0b;color:#eaeaea;border-bottom:1px solid #222;padding:10px 12px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <div style="font-weight:700;letter-spacing:.2px">Synaptics Seconds Metering</div>
+  <label style="display:flex;gap:6px;align-items:center;font-size:12px">
+    <span>API Base</span>
+    <input id="apiBase" value="" placeholder="http://localhost:8080" style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:220px">
+  </label>
+  <label style="display:flex;gap:6px;align-items:center;font-size:12px">
+    <span>API Key</span>
+    <input id="apiKey" value="" placeholder="x-api-key" style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:200px">
+  </label>
+  <label style="display:flex;gap:6px;align-items:center;font-size:12px">
+    <span>Session</span>
+    <input id="sessionId" value="" placeholder="sess_..." style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:220px">
+  </label>
+  <button id="btnAutofill" style="padding:7px 10px;border-radius:10px;border:1px solid #2a2a2a;background:#161616;color:#fff;cursor:pointer">Autofill Qty</button>
+  <button id="btnGenerate" style="padding:7px 10px;border-radius:10px;border:1px solid #2a2a2a;background:#1c2a1c;color:#d8ffd8;cursor:pointer">Generate Invoice</button>
+  <span id="synapticsStatus" style="font-size:12px;opacity:.85"></span>
+</div>
+
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+  function setStatus(msg){ const el = $("synapticsStatus"); if(el) el.textContent = msg || ""; }
+
+  function getConfig(){
+    const fromLocal = {
+      apiBase: localStorage.getItem("syn_apiBase") || "",
+      apiKey: localStorage.getItem("syn_apiKey") || "",
+      sessionId: localStorage.getItem("syn_sessionId") || ""
+    };
+    const fromUrl = new URL(location.href);
+    const base = fromUrl.searchParams.get("base") || fromLocal.apiBase || "";
+    const key = fromUrl.searchParams.get("key") || fromLocal.apiKey || "";
+    const session = fromUrl.searchParams.get("session") || fromLocal.sessionId || "";
+    return { apiBase: base, apiKey: key, sessionId: session };
+  }
+
+  function saveConfig(){
+    localStorage.setItem("syn_apiBase", $("apiBase").value.trim());
+    localStorage.setItem("syn_apiKey", $("apiKey").value.trim());
+    localStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+  }
+
+  function slugId(label){
+    return String(label || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 120);
+  }
+
+  async function apiFetch(path, opts){
+    const base = $("apiBase").value.trim().replace(/\/+$/,"");
+    const key = $("apiKey").value.trim();
+    if(!base) throw new Error("Missing API Base");
+    if(!key) throw new Error("Missing API Key");
+    const res = await fetch(base + path, {
+      ...opts,
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        ...(opts && opts.headers ? opts.headers : {})
+      }
+    });
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok) throw new Error(data?.error || ("HTTP " + res.status));
+    return data;
+  }
+
+  function findLineItemRows(){
+    const allTr = Array.from(document.querySelectorAll("tr"));
+    let headerIndex = -1;
+    for(let i=0;i<allTr.length;i++){
+      const t = allTr[i].innerText || "";
+      if(/\bDescription\b/i.test(t) && /\bQty\b/i.test(t) && /Unit price/i.test(t)){
+        headerIndex = i;
+        break;
+      }
+    }
+    if(headerIndex === -1) return [];
+    const rows = [];
+    for(let i=headerIndex+1;i<allTr.length;i++){
+      const tr = allTr[i];
+      const t = tr.innerText || "";
+      if(/\bSubtotal\b/i.test(t) || /\bNotes\b/i.test(t)) break;
+      const tds = tr.querySelectorAll("td");
+      if(!tds || tds.length < 7) continue;
+      const desc = (tds[1].innerText || "").trim();
+      const qtyCell = tds[4];
+      const unitCell = tds[5];
+      const totalCell = tds[6];
+      if(!desc) continue;
+      rows.push({ tr, desc, qtyCell, unitCell, totalCell });
+    }
+    return rows;
+  }
+
+  function moneyCentsFromCell(cell){
+    const t = (cell && cell.innerText ? cell.innerText : "").trim();
+    const m = t.match(/\$\s*([0-9]+(?:\.[0-9]{1,2})?)/);
+    if(!m) return null;
+    const v = Number(m[1]);
+    if(Number.isNaN(v)) return null;
+    return Math.round(v * 100);
+  }
+
+  function formatMoney(cents){
+    const amt = (cents/100).toFixed(2);
+    return "$" + amt;
+  }
+
+  function setQtyCell(cell, value){
+    let input = cell.querySelector("input[data-syn-qty='1']");
+    if(!input){
+      cell.innerHTML = "";
+      input = document.createElement("input");
+      input.setAttribute("data-syn-qty","1");
+      input.type = "number";
+      input.min = "0";
+      input.step = "1";
+      input.value = String(value || 0);
+      input.style.width = "80px";
+      input.style.padding = "4px 6px";
+      input.style.borderRadius = "8px";
+      input.style.border = "1px solid #333";
+      input.style.background = "#fff";
+      input.style.color = "#000";
+      cell.appendChild(input);
+    }else{
+      input.value = String(value || 0);
+    }
+    return input;
+  }
+
+  function getQtyValue(cell){
+    const input = cell.querySelector("input[data-syn-qty='1']");
+    if(input) return Number(input.value || 0) || 0;
+    return Number((cell.innerText||"").trim()) || 0;
+  }
+
+  function updateLineTotals(rows){
+    let subtotalCents = 0;
+    for(const r of rows){
+      const unit = moneyCentsFromCell(r.unitCell) || 0;
+      const qty = getQtyValue(r.qtyCell) || 0;
+      const lineTotal = unit * qty;
+      subtotalCents += lineTotal;
+      r.totalCell.innerText = formatMoney(lineTotal);
+      r.tr.setAttribute("data-syn-item-id", slugId(r.desc));
+    }
+
+    const candidates = Array.from(document.querySelectorAll("td,th,div,span")).filter(el => el && el.innerText);
+    const subtotalLabel = candidates.find(el => /^\s*Subtotal\s*$/i.test(el.innerText.trim()));
+    if(subtotalLabel){
+      const tr = subtotalLabel.closest("tr");
+      if(tr){
+        const tds = tr.querySelectorAll("td");
+        if(tds && tds.length){
+          tds[tds.length-1].innerText = formatMoney(subtotalCents);
+        }
+      }
+    }
+    const totalLabel = candidates.find(el => /Total\s+due/i.test(el.innerText));
+    if(totalLabel){
+      const tr = totalLabel.closest("tr");
+      if(tr){
+        const tds = tr.querySelectorAll("td");
+        if(tds && tds.length){
+          tds[tds.length-1].innerText = formatMoney(subtotalCents);
+        }
+      }
+    }
+    return subtotalCents;
+  }
+
+  async function autofillFromSession(){
+    saveConfig();
+    const sessionId = $("sessionId").value.trim();
+    if(!sessionId) throw new Error("Missing Session ID");
+    setStatus("Fetching session summary...");
+    const summary = await apiFetch("/sessions/" + encodeURIComponent(sessionId) + "/summary", { method:"GET" });
+
+    const secondsById = new Map();
+    (summary.lines || []).forEach(l => secondsById.set(l.item_id, l.seconds));
+
+    const rows = findLineItemRows();
+    if(rows.length === 0) throw new Error("Could not find invoice line-item table");
+
+    for(const r of rows){
+      const itemId = slugId(r.desc);
+      const sec = secondsById.get(itemId) || 0;
+      const input = setQtyCell(r.qtyCell, sec);
+      input.addEventListener("input", ()=> updateLineTotals(rows));
+    }
+    const subtotal = updateLineTotals(rows);
+    setStatus("Autofilled. Subtotal: " + formatMoney(subtotal));
+  }
+
+  async function generateInvoice(){
+    saveConfig();
+    const sessionId = $("sessionId").value.trim();
+    if(!sessionId) throw new Error("Missing Session ID");
+    setStatus("Generating invoice JSON...");
+    const payload = await apiFetch("/invoices/from-session", {
+      method:"POST",
+      body: JSON.stringify({ session_id: sessionId })
+    });
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "synaptics-invoice-" + sessionId + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    setStatus("Invoice JSON generated.");
+  }
+
+  const cfg = getConfig();
+  $("apiBase").value = cfg.apiBase || (location.origin === "null" ? "http://localhost:8080" : location.origin);
+  $("apiKey").value = cfg.apiKey || "";
+  $("sessionId").value = cfg.sessionId || "";
+
+  $("btnAutofill").addEventListener("click", ()=> autofillFromSession().catch(e=>setStatus("Error: " + e.message)));
+  $("btnGenerate").addEventListener("click", ()=> generateInvoice().catch(e=>setStatus("Error: " + e.message)));
+
+  if($("sessionId").value.trim() && $("apiKey").value.trim()){
+    autofillFromSession().catch(()=>{});
+  }
+})();
+</script>
+
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"><link type="text/css" rel="stylesheet" href="resources/sheet.css" >
+<style type="text/css">.ritz .waffle a { color: inherit; }.ritz .waffle .s7{background-color:#ffffff;text-align:right;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s23{border-bottom:1px SOLID #b7b7b7;background-color:#f3f3f3;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s30{background-color:#ffffff;text-align:left;color:#434343;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s32{background-color:#ffffff;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:18pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s15{border-left:none;border-right:none;background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s13{background-color:#ffffff;text-align:left;font-weight:bold;color:#434343;font-family:docs-Roboto,Arial;font-size:12pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s18{border-bottom:1px SOLID #b7b7b7;background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s25{border-bottom:1px SOLID #b7b7b7;background-color:#f3f3f3;text-align:right;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s27{background-color:#ffffff;text-align:left;color:#999999;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:normal;overflow:hidden;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s16{border-left:none;background-color:#ffffff;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s21{background-color:#ffffff;text-align:right;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s5{background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:top;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s1{background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s4{background-color:#ffffff;text-align:left;color:#6d64e8;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s19{background-color:#ffffff;text-align:left;font-weight:bold;color:#2a3990;font-family:docs-Roboto,Arial;font-size:12pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s26{background-color:#ffffff;text-align:left;color:#999999;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s29{background-color:#ffffff;text-align:right;font-weight:bold;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s17{border-left:none;background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s22{background-color:#ffffff;text-align:right;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s34{background-color:#ffffff;text-align:left;color:#e01b84;font-family:docs-Roboto,Arial;font-size:18pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s9{background-color:#ffffff;text-align:left;font-weight:bold;color:#283592;font-family:docs-Roboto,Arial;font-size:34pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s11{background-color:#ffffff;text-align:left;color:#e01b84;font-family:docs-Roboto,Arial;font-size:11pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s12{background-color:#ffffff;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:13pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s35{background-color:#ffffff;text-align:right;font-weight:bold;color:#e01b84;font-family:docs-Roboto,Arial;font-size:20pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s8{background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s14{border-right:none;background-color:#ffffff;text-align:left;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s24{border-bottom:1px SOLID #b7b7b7;background-color:#f3f3f3;text-align:right;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s10{background-color:#ffffff;text-align:left;font-weight:bold;color:#e01b84;font-family:docs-Roboto,Arial;font-size:12pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s31{background-color:#ffffff;text-align:left;font-weight:bold;color:#666666;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s33{background-color:#ffffff;text-align:right;color:#e01b84;font-family:docs-Roboto,Arial;font-size:18pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s28{background-color:#ffffff;text-align:right;color:#2a3990;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s2{background-color:#ffffff;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s0{background-color:#283592;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s6{background-color:#ffffff;text-align:left;color:#000000;font-family:docs-Roboto,Arial;font-size:10pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s20{background-color:#ffffff;text-align:right;font-weight:bold;color:#2a3990;font-family:docs-Roboto,Arial;font-size:12pt;vertical-align:middle;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}.ritz .waffle .s3{background-color:#ffffff;text-align:left;color:#6d64e8;font-family:docs-Roboto,Arial;font-size:20pt;vertical-align:bottom;white-space:nowrap;direction:ltr;padding:2px 3px 2px 3px;}</style><div class="ritz grid-container" dir="ltr"><table class="waffle no-grid" cellspacing="0" cellpadding="0"><thead><tr><th class="row-header freezebar-origin-ltr"></th><th id="790763898C0" style="width:48px;" class="column-headers-background">A</th><th id="790763898C1" style="width:275px;" class="column-headers-background">B</th><th id="790763898C2" style="width:131px;" class="column-headers-background">C</th><th id="790763898C3" style="width:366px;" class="column-headers-background">D</th><th id="790763898C4" style="width:36px;" class="column-headers-background">E</th><th id="790763898C5" style="width:92px;" class="column-headers-background">F</th><th id="790763898C6" style="width:86px;" class="column-headers-background">G</th><th id="790763898C7" style="width:157px;" class="column-headers-background">H</th></tr></thead><tbody><tr style="height: 7px"><th id="790763898R0" style="height: 7px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 7px">1</div></th><td class="s0"></td><td class="s0"></td><td class="s0"></td><td class="s0"></td><td class="s0"></td><td class="s0"></td><td class="s0"></td><td class="s0"></td></tr><tr style="height: 23px"><th id="790763898R1" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">2</div></th><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td></tr><tr style="height: 25px"><th id="790763898R2" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">3</div></th><td class="s2"></td><td class="s3" dir="ltr" colspan="3">Synaptics.Systems</td><td class="s3"></td><td class="s4"></td><td class="s4"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R3" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">4</div></th><td class="s2"></td><td class="s1" dir="ltr" colspan="3">4850 44B Ave</td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R4" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">5</div></th><td class="s2"></td><td class="s5" dir="ltr" colspan="3">Delta | B.C | V4K1H8 </td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R5" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">6</div></th><td class="s6"></td><td class="s7" dir="ltr" colspan="2">6048309324</td><td class="s8"></td><td class="s8"></td><td class="s8"></td><td class="s8"></td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R6" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">7</div></th><td class="s2"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s2"></td></tr><tr style="height: 25px"><th id="790763898R7" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">8</div></th><td class="s6" dir="ltr"></td><td class="s9" dir="ltr" colspan="4">Invoice</td><td class="s2"></td><td class="s2"></td><td class="s6" dir="ltr"></td></tr><tr style="height: 23px"><th id="790763898R8" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">9</div></th><td class="s6"></td><td class="s10" dir="ltr" colspan="2">Submitted on 01/28/2026</td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s8"></td></tr><tr style="height: 20px"><th id="790763898R9" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">10</div></th><td class="s6"></td><td class="s11" dir="ltr" colspan="2"></td><td class="s2" colspan="2"></td><td class="s2" colspan="2"></td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R10" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">11</div></th><td class="s12"></td><td class="s13" dir="ltr" colspan="2">Invoice for</td><td class="s13" dir="ltr" colspan="2">Payable to</td><td class="s13" dir="ltr" colspan="2">Invoice #</td><td class="s12"></td></tr><tr style="height: 23px"><th id="790763898R11" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">12</div></th><td class="s6"></td><td class="s8" dir="ltr" colspan="2">Canada</td><td class="s8" dir="ltr" colspan="2">Michael Rybaltowicz</td><td class="s8" dir="ltr" colspan="2">1002:[2]</td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R12" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">13</div></th><td class="s6"></td><td class="s8" dir="ltr" colspan="2">Goverment Of Canada</td><td class="s8" colspan="2"></td><td class="s1" colspan="2"></td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R13" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">14</div></th><td class="s6"></td><td class="s8" dir="ltr" colspan="2">80 Wellington Street</td><td class="s13" dir="ltr" colspan="2">Project</td><td class="s13" dir="ltr" colspan="2">Due date</td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R14" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">15</div></th><td class="s6"></td><td class="s8" dir="ltr" colspan="2">Ottawa | O.N | K1A 0A2</td><td class="s8" dir="ltr" colspan="2">&lt;[Brain_Matter]&gt;</td><td class="s8" dir="ltr" colspan="2">On_Aquisition</td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R15" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">16</div></th><td class="s6"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R16" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">17</div></th><td class="s6"></td><td class="s14 softmerge" dir="ltr"><div class="softmerge-inner" style="width:1022px;left:-1px">&lt;[Unix_Epoch]&gt;&lt;[1769637602]:([1769:[673600]-[759999]):([1769:[760000]-[8463999]]):([1769:[846400]-[932799]):([1769932800-1770019199]):([1770019200-1770105599])&gt;</div></td><td class="s15" dir="ltr"></td><td class="s15" dir="ltr"></td><td class="s15" dir="ltr"></td><td class="s15" dir="ltr"></td><td class="s15" dir="ltr"></td><td class="s16"></td></tr><tr style="height: 23px"><th id="790763898R17" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">18</div></th><td class="s6"></td><td class="s14 softmerge" dir="ltr"><div class="softmerge-inner" style="width:770px;left:-1px">&lt;[Genesis_Key]&gt;:[&lt;[*:98KJ723K8Q5AQ85|10|9456|10|3AK|10|84QA47629642JKA3Q2371065J7J]&gt;]</div></td><td class="s15" dir="ltr"></td><td class="s17" dir="ltr"></td><td class="s17" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s6"></td></tr><tr style="height: 23px"><th id="790763898R18" style="height: 23px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 23px">19</div></th><td class="s6"></td><td class="s14 softmerge" dir="ltr"><div class="softmerge-inner" style="width:404px;left:-1px">&lt;[String_Key]&gt;:[&lt;[*1239224]&gt;&lt;[*1239221]&gt;&lt;[*1239223]&gt;&lt;[*1239308]&gt;]</div></td><td class="s17" dir="ltr"></td><td class="s17" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s8" dir="ltr"></td><td class="s6"></td></tr><tr style="height: 22px"><th id="790763898R19" style="height: 22px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 22px">20</div></th><td class="s2"></td><td class="s18" dir="ltr" colspan="2">&lt;[ilumini]&gt;:&lt;[C:82319060:A]&gt;</td><td class="s18" colspan="2"></td><td class="s18" colspan="2"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R20" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">21</div></th><td></td><td class="s1" dir="ltr">&lt;[String]:&lt;[Ħ∀☡ÅℝD]&gt;]&gt;</td><td class="s1" dir="ltr"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R21" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">22</div></th><td class="s2"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s2"></td></tr><tr style="height: 20px"><th id="790763898R22" style="height: 20px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 20px">23</div></th><td class="s6"></td><td class="s1"></td><td class="s1"></td><td class="s1"></td><td class="s8"></td><td class="s1"></td><td class="s1"></td><td class="s6"></td></tr><tr style="height: 39px"><th id="790763898R23" style="height: 39px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 39px">24</div></th><td class="s6"></td><td class="s19" dir="ltr" colspan="3">Description</td><td class="s20" dir="ltr">Qty</td><td class="s20" dir="ltr">Unit price</td><td class="s20" dir="ltr">Total price</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R24" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">25</div></th><td class="s21" dir="ltr">1:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Life|Death_Relative_to_[AI]]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.01</td><td class="s7" dir="ltr">$0.01</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R25" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">26</div></th><td class="s21" dir="ltr">2:</td><td class="s1 softmerge" dir="ltr"><div class="softmerge-inner" style="width:272px;left:-1px">&lt;[Second&#39;s_Of_Decision_Making]&gt;&lt;[A|A25|J9J7|10|Q3K86|10|K|10|2KA27|JQ843|10|J444858796|Q66A539|723]:[AMEN]&gt;&gt;</div></td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.01</td><td class="s7" dir="ltr">$0.01</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R26" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">27</div></th><td class="s21" dir="ltr">3:</td><td class="s1 softmerge" dir="ltr"><div class="softmerge-inner" style="width:272px;left:-1px">&lt;[Second&#39;s_Of_Reasoning]&gt;&lt;[422|10|464|V|10|63J|10|Q45775|10|Q89|A|76KQ39|AQAKJ|8|A2286538|73J5K9J9]:[AMEN]&gt;</div></td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.01</td><td class="s7" dir="ltr">$0.01</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R27" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">28</div></th><td class="s21" dir="ltr">4:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Thinking]&gt;&lt;[]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.00</td><td class="s7" dir="ltr">$0.00</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R28" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">29</div></th><td class="s21" dir="ltr">5:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Thought]&gt;&lt;[]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.00</td><td class="s7" dir="ltr">$0.00</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R29" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">30</div></th><td class="s21" dir="ltr">6:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Dream_Stasus]&gt;&lt;[]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.00</td><td class="s7" dir="ltr">$0.00</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R30" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">31</div></th><td class="s21" dir="ltr">7:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Privacy]&gt;&lt;[]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.00</td><td class="s7" dir="ltr">$0.01</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R31" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">32</div></th><td class="s21" dir="ltr">8:</td><td class="s1" dir="ltr">&lt;[Second&#39;s_Of_Prayer:[Entropy]]&gt;&lt;[]&gt;</td><td class="s1" dir="ltr">&lt;[Per/Second&#39;s]&gt;</td><td class="s1" dir="ltr"></td><td class="s7" dir="ltr">1</td><td class="s22" dir="ltr">$0.01</td><td class="s7" dir="ltr">$0.01</td><td class="s6"></td></tr><tr style="height: 25px"><th id="790763898R32" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">33</div></th><td class="s21" dir="ltr">10:</td><td class="s23" dir="ltr">&lt;[Synaptic.Systems]&gt;:&lt;[AI-Systems]&gt;</td><td class="s23" dir="ltr"></td><td class="s23" dir="ltr"></td><td class="s24" dir="ltr">1</td><td class="s25" dir="ltr">$1.00</td><td class="s24" dir="ltr">$1.00</td><td class="s6"></td></tr><tr style="height: 31px"><th id="790763898R34" style="height: 31px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 31px">35</div></th><td class="s2"></td><td class="s26" dir="ltr">Notes:</td><td class="s27" dir="ltr" colspan="3">&lt;[Priliminary_Invoice]&gt;&lt;[Synaptics.Systems]&gt;&lt;[Start_Sequence:Ark:=:successful-Payment]&gt;</td><td class="s28" dir="ltr">Subtotal</td><td class="s29">$1.05</td><td class="s2"></td></tr><tr style="height: 25px"><th id="790763898R35" style="height: 25px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 25px">36</div></th><td class="s2"></td><td class="s30"></td><td class="s27" dir="ltr" colspan="3">(Bank Details)&lt;[Wire_Transfer:Info]&gt;&lt;[Bank_Name:[TD_Canada_Trust]]&gt;:&lt;[Swift_Code:[TDOMCATTTOR]]&gt;:&lt;[Institution_Number:[004]]&gt;:&lt;[Branch_Address:[5154_48Th_Ave | Delta | BC | V4K1W3]]&gt;</td><td class="s28" dir="ltr">Adjustments</td><td class="s31" dir="ltr"></td><td class="s2"></td></tr><tr style="height: 39px"><th id="790763898R36" style="height: 39px;" class="row-headers-background"><div class="row-header-wrapper" style="line-height: 39px">37</div></th><td class="s32"></td><td class="s33" dir="ltr"></td><td class="s34"></td><td class="s34"></td><td class="s34"></td><td class="s35" colspan="2">$1.05</td><td class="s32"></td></tr></tbody></table></div>
