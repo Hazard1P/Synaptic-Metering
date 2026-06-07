@@ -92,8 +92,11 @@ CREATE TABLE IF NOT EXISTS usage_events (
 
 CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
   at TEXT NOT NULL DEFAULT (datetime('now')),
-  payload_json TEXT NOT NULL
+  payload_json TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 `);
 

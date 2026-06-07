@@ -18,6 +18,7 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
+import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
 const db = openDb();
@@ -151,20 +152,30 @@ function rejectForbiddenSession(res){
 }
 
 // --- catalog
-app.get("/catalog", (req,res)=>{
-  const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
-  res.json({ items: rows });
+app.get("/catalog", (req,res,next)=>{
+  try{
+    requireScope(req, "catalog:read");
+    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
+    res.json({ items: rows });
+  }catch(e){ next(e); }
 });
 
-app.post("/catalog/refresh", (req,res)=>{
-  const rows = refreshCatalog(db);
-  res.json({ ok:true, items: rows });
+app.post("/catalog/refresh", (req,res,next)=>{
+  try{
+    requireScope(req, "catalog:write");
+    const rows = refreshCatalog(db);
+    res.json({ ok:true, items: rows });
+  }catch(e){ next(e); }
 });
 
 // --- sessions
 app.post("/sessions", (req,res,next)=>{
   try{
+    requireScope(req, "sessions:write");
     const body = parseBody(CreateSessionBody, req.body);
+    if(body.account_id && body.account_id !== req.auth.accountId){
+      return res.status(403).json({ error:"session_account_forbidden" });
+    }
     const id = "sess_" + nanoid(16);
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
@@ -325,13 +336,18 @@ app.get("/ndsp/state", (req,res)=>{
   res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
 });
 
-app.post("/ndsp/telemetry", (req,res)=>{
-  const id = "t_" + nanoid(18);
-  const payload = req.body ?? {};
-  db.prepare("INSERT INTO ndsp_telemetry (id, payload_json) VALUES (?, ?)").run(id, JSON.stringify(payload));
+app.post("/ndsp/telemetry", (req,res,next)=>{
+  try{
+    requireScope(req, "telemetry:write");
+    const id = "t_" + nanoid(18);
+    const payload = req.body ?? {};
+    const sessionId = payload.session_id || null;
+    if(sessionId) loadOwnedSession(db, req, sessionId);
+    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, req.auth.accountId, sessionId, JSON.stringify(payload));
 
-  // Echo back a lightweight state acknowledgment
-  res.json({ ok:true, id, state: { meta:{ received:true, at:new Date().toISOString() } } });
+    // Echo back a lightweight state acknowledgment
+    res.json({ ok:true, id, account_id: req.auth.accountId, session_id: sessionId, state: { meta:{ received:true, at:new Date().toISOString() } } });
+  }catch(e){ next(e); }
 });
 
 // --- error handler
