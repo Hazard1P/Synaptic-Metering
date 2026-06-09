@@ -1,4 +1,10 @@
-import { createHash, timingSafeEqual } from "crypto";
+import { createCipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { nanoid } from "nanoid";
+
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "syn_meter_session";
+const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
+const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS || 30);
+
 
 function parseDigests(value){
   return (value || "")
@@ -21,6 +27,144 @@ function digestMatches(providedDigest, expectedDigest){
   const provided = Buffer.from(providedDigest, "hex");
   const expected = Buffer.from(expectedDigest, "hex");
   return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
+
+function requireEnv(name){
+  const value = process.env[name];
+  if(!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function cookieSecureEnabled(req){
+  if(process.env.COOKIE_SECURE) return process.env.COOKIE_SECURE !== "false";
+  return process.env.NODE_ENV === "production" || req?.secure || req?.headers?.["x-forwarded-proto"] === "https";
+}
+
+function parseCookies(req){
+  const header = req.headers?.cookie || "";
+  return header.split(";").reduce((cookies, part) => {
+    const index = part.indexOf("=");
+    if(index === -1) return cookies;
+    const name = part.slice(0, index).trim();
+    if(!name) return cookies;
+    const rawValue = part.slice(index + 1).trim();
+    try{
+      cookies[name] = decodeURIComponent(rawValue);
+    }catch{
+      cookies[name] = rawValue;
+    }
+    return cookies;
+  }, {});
+}
+
+function appendCookie(res, name, value, maxAgeSeconds, req){
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.max(0, Number(maxAgeSeconds || 0))}`
+  ];
+  if(cookieSecureEnabled(req)) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function setCookie(res, name, value, maxAgeSeconds, req){
+  appendCookie(res, name, value, maxAgeSeconds, req);
+}
+
+function clearCookie(res, name, req){
+  appendCookie(res, name, "", 0, req);
+}
+
+function stateSecret(){
+  return process.env.OAUTH_STATE_SECRET || process.env.TOKEN_ENCRYPTION_KEY || process.env.GOOGLE_CLIENT_SECRET || "dev-state-secret";
+}
+
+function signState(nonce){
+  const signature = createHmac("sha256", stateSecret()).update(nonce).digest("base64url");
+  return `${nonce}.${signature}`;
+}
+
+function verifyState(state){
+  const [nonce, signature] = String(state || "").split(".");
+  if(!nonce || !signature) return false;
+  const expected = signState(nonce).split(".")[1];
+  const providedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  return providedBuffer.length === expectedBuffer.length && timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+function googleRedirectUri(req){
+  if(process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  return `${base.replace(/\/+$/, "")}/auth/google/callback`;
+}
+
+async function exchangeGoogleCode(req, code){
+  const params = new URLSearchParams({
+    code,
+    client_id: requireEnv("GOOGLE_CLIENT_ID"),
+    client_secret: requireEnv("GOOGLE_CLIENT_SECRET"),
+    redirect_uri: googleRedirectUri(req),
+    grant_type: "authorization_code"
+  });
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params
+  });
+  const body = await response.json().catch(() => ({}));
+  if(!response.ok) throw new Error(body.error_description || body.error || "google_token_exchange_failed");
+  return body;
+}
+
+async function verifyGoogleIdToken(idToken, audience){
+  const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
+  const claims = await response.json().catch(() => ({}));
+  if(!response.ok) throw new Error(claims.error_description || claims.error || "google_id_token_invalid");
+  if(claims.aud !== audience) throw new Error("google_id_token_audience_mismatch");
+  if(claims.exp && Number(claims.exp) * 1000 < Date.now()) throw new Error("google_id_token_expired");
+  return claims;
+}
+
+function assertAllowedDomain(claims){
+  const allowed = (process.env.GOOGLE_ALLOWED_DOMAINS || "")
+    .split(",")
+    .map(domain => domain.trim().toLowerCase())
+    .filter(Boolean);
+  if(allowed.length === 0) return;
+
+  const hostedDomain = String(claims.hd || "").toLowerCase();
+  const emailDomain = String(claims.email || "").split("@").pop()?.toLowerCase() || "";
+  if(!allowed.includes(hostedDomain) && !allowed.includes(emailDomain)){
+    const err = new Error("google_domain_not_allowed");
+    err.status = 403;
+    throw err;
+  }
+}
+
+function tokenRetentionEnabled(){
+  return process.env.GOOGLE_OAUTH_RETAIN_TOKENS === "true";
+}
+
+function tokenEncryptionKey(){
+  const raw = requireEnv("TOKEN_ENCRYPTION_KEY");
+  if(/^[a-f0-9]{64}$/i.test(raw)) return Buffer.from(raw, "hex");
+  const decoded = Buffer.from(raw, "base64");
+  if(decoded.length === 32) return decoded;
+  const utf8 = Buffer.from(raw, "utf8");
+  if(utf8.length === 32) return utf8;
+  throw new Error("TOKEN_ENCRYPTION_KEY must resolve to 32 bytes");
+}
+
+function encryptToken(value){
+  const key = tokenEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${ciphertext.toString("base64url")}`;
 }
 
 export function requireApiKey(req, res, next){
@@ -83,9 +227,9 @@ export function startGoogleOAuth(req, res, next){
   try{
     const clientId = requireEnv("GOOGLE_CLIENT_ID");
     const redirectUri = googleRedirectUri(req);
-    const nonce = crypto.randomBytes(24).toString("base64url");
+    const nonce = randomBytes(24).toString("base64url");
     const signedState = signState(nonce);
-    setCookie(res, OAUTH_STATE_COOKIE_NAME, signedState, 600);
+    setCookie(res, OAUTH_STATE_COOKIE_NAME, signedState, 600, req);
 
     const params = new URLSearchParams({
       client_id: clientId,
@@ -109,7 +253,7 @@ export function googleOAuthCallback(db){
       if(!state || state !== cookies[OAUTH_STATE_COOKIE_NAME] || !verifyState(state)){
         return res.status(400).json({ error: "invalid_oauth_state" });
       }
-      clearCookie(res, OAUTH_STATE_COOKIE_NAME);
+      clearCookie(res, OAUTH_STATE_COOKIE_NAME, req);
 
       const code = String(req.query.code || "");
       if(!code) return res.status(400).json({ error: "missing_oauth_code" });
@@ -125,7 +269,7 @@ export function googleOAuthCallback(db){
         INSERT INTO auth_sessions (id, account_id, expires_at)
         VALUES (?, ?, datetime('now', ?))
       `).run(authSessionId, account.id, `+${AUTH_SESSION_TTL_DAYS} days`);
-      appendCookie(res, SESSION_COOKIE_NAME, authSessionId, AUTH_SESSION_TTL_DAYS * 24 * 60 * 60);
+      appendCookie(res, SESSION_COOKIE_NAME, authSessionId, AUTH_SESSION_TTL_DAYS * 24 * 60 * 60, req);
 
       const returnTo = process.env.OAUTH_SUCCESS_REDIRECT || "/me";
       res.redirect(returnTo);
@@ -209,7 +353,7 @@ export function logout(db){
     if(sessionId){
       db.prepare("DELETE FROM auth_sessions WHERE id=?").run(sessionId);
     }
-    clearCookie(res, SESSION_COOKIE_NAME);
+    clearCookie(res, SESSION_COOKIE_NAME, req);
     res.json({ ok: true });
   };
 }
