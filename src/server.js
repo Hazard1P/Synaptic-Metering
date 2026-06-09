@@ -274,11 +274,13 @@ app.get("/sessions/:id/summary", (req,res)=>{
 
 // --- invoices
 app.post("/invoices/from-session", (req,res)=>{
+  if(!req.authAccount) return res.status(403).json({ error:"account_required" });
+
   const { session_id } = req.body || {};
   if(!session_id) return res.status(400).json({ error:"missing_session_id" });
   const summary = computeSessionSummary(db, session_id);
   if(!summary) return res.status(404).json({ error:"session_not_found" });
-  if(!canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
+  if(summary.session.account_id !== req.authAccount.id) return rejectForbiddenSession(res);
 
   const issued_at = new Date().toISOString();
   const invoice = {
