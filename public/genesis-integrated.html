@@ -539,9 +539,8 @@ anomaly if |zscore(entropy)| > 2.2`;
   async function pushTelemetry(inputs){
     if(!NDSP_BACKEND) return null;
     try{
-      const apiKey=(sessionStorage.getItem("syn_apiKey")||"").trim();
       const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
-        method:"POST", headers:{ "Content-Type":"application/json", ...(apiKey?{"x-api-key":apiKey}:{}) }, body:JSON.stringify(inputs)
+        method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(inputs)
       });
       if(!r.ok) return null;
       const j=await r.json();
@@ -552,8 +551,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   async function pullState(){
     if(!NDSP_BACKEND) return null;
     try{
-      const apiKey=(sessionStorage.getItem("syn_apiKey")||"").trim();
-      const r=await fetch(NDSP_BACKEND+"/ndsp/state",{ headers: apiKey?{"x-api-key":apiKey}:{} });
+      const r=await fetch(NDSP_BACKEND+"/ndsp/state",{ credentials:"include" });
       if(!r.ok) return null;
       const j=await r.json();
       policy=j.policy||null;
@@ -704,9 +702,11 @@ anomaly if |zscore(entropy)| > 2.2`;
 <div id="syn-bridge">
   <h3>Synaptics Thinking Meter</h3>
   <div class="r">
-    <input id="synApiKey" placeholder="API key"/>
-    <button id="synSave" class="primary">Save Key</button>
+    <a id="synLogin" href="/auth/google/start">Sign in with Google</a>
+    <button id="synLogout">Logout</button>
+    <button id="synRefreshAccount">Refresh account</button>
   </div>
+  <div class="status" id="synAccountStatus">Checking account...</div>
   <div class="r">
     <input id="synSession" placeholder="Session id"/>
     <select id="synItem"></select>
@@ -730,16 +730,42 @@ anomaly if |zscore(entropy)| > 2.2`;
   const $=id=>document.getElementById(id);
   const apiBase = location.origin.replace(/\/+$/,'');
   let loop=null, lastActivity=Date.now(), currentRunning=false;
+  let authenticatedAccount=null;
   const IDLE_MS = 5000;
   let itemLabel='';
 
   function setStatus(msg){ $('synStatus').textContent = msg; }
-  function saveCfg(){ sessionStorage.setItem('syn_apiKey',$('synApiKey').value.trim()); sessionStorage.setItem('syn_sessionId',$('synSession').value.trim()); sessionStorage.setItem('syn_itemId',$('synItem').value || ''); }
-  function loadCfg(){ $('synApiKey').value=sessionStorage.getItem('syn_apiKey')||''; $('synSession').value=sessionStorage.getItem('syn_sessionId')||''; }
+  function saveCfg(){ sessionStorage.setItem('syn_sessionId',$('synSession').value.trim()); sessionStorage.setItem('syn_itemId',$('synItem').value || ''); }
+  function loadCfg(){ $('synSession').value=sessionStorage.getItem('syn_sessionId')||''; }
+  function setAccountControls(account){
+    authenticatedAccount = account || null;
+    ['synStart','synStop','synClose'].forEach(id=>$(id).disabled = !authenticatedAccount);
+    $('synLogin').style.display = authenticatedAccount ? 'none' : 'inline-block';
+    $('synLogout').style.display = authenticatedAccount ? 'inline-block' : 'none';
+    $('synAccountStatus').textContent = authenticatedAccount
+      ? `Signed in as ${authenticatedAccount.display_name || authenticatedAccount.id}`
+      : 'Sign in before starting or closing browser metering sessions.';
+  }
+  async function refreshAccount(){
+    try{
+      const res = await fetch(apiBase + '/me', { credentials:'include' });
+      if(!res.ok){ setAccountControls(null); return null; }
+      const data = await res.json();
+      setAccountControls(data.account);
+      return data.account;
+    }catch(e){
+      setAccountControls(null);
+      $('synAccountStatus').textContent = 'Could not check account: ' + e.message;
+      return null;
+    }
+  }
+  function requireSignedIn(){
+    if(!authenticatedAccount) throw new Error('Please sign in with Google before using browser metering.');
+  }
   async function api(path, opts={}){
-    const key = $('synApiKey').value.trim();
-    const headers = { 'content-type':'application/json', ...(opts.headers||{}), ...(key?{'x-api-key':key}:{}) };
-    const res = await fetch(apiBase + path, { ...opts, headers });
+    requireSignedIn();
+    const headers = { 'content-type':'application/json', ...(opts.headers||{}) };
+    const res = await fetch(apiBase + path, { ...opts, credentials:'include', headers });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error || ('HTTP '+res.status));
     return data;
@@ -804,7 +830,8 @@ anomaly if |zscore(entropy)| > 2.2`;
   window.addEventListener('focus', noteActivity);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) noteActivity(); });
 
-  $('synSave').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); setStatus('API key saved for this browser session only.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synRefreshAccount').addEventListener('click', async ()=>{ try{ const account = await refreshAccount(); if(account) await refreshCatalog(); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synLogout').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await fetch(apiBase + '/auth/logout', { method:'POST', credentials:'include' }); currentRunning=false; setAccountControls(null); setStatus('Logged out. Sign in to start browser metering.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synStart').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); await startItem(); await pullSummary(); if(!loop) loop=setInterval(tick,1000); noteActivity(); setStatus('Thinking meter armed. Move, type, or interact to accumulate seconds.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synStop').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await stopItem(); setStatus('Meter stopped manually.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synClose').addEventListener('click', ()=> closeSession().catch(e=>setStatus('Error: '+e.message)));
@@ -812,7 +839,10 @@ anomaly if |zscore(entropy)| > 2.2`;
   $('synSession').addEventListener('change', saveCfg);
 
   loadCfg();
-  refreshCatalog().then(pullSummary).catch(()=>setStatus('Enter API key to enable metering.'));
+  setAccountControls(null);
+  refreshAccount().then(account=>{
+    if(account) refreshCatalog().then(pullSummary).catch(e=>setStatus('Error: ' + e.message));
+  });
 })();
 </script>
 </body>

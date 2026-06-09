@@ -142,12 +142,25 @@
   <!-- RIGHT: Metering + NDSP monitor -->
   <div class="panel">
     <div class="card">
+      <h2>Account Session</h2>
+      <div class="row">
+        <a class="pill" id="btnLogin" href="/auth/google/start">Sign in with Google</a>
+        <button class="danger" id="btnLogout" type="button">Logout</button>
+        <button id="btnRefreshAccount" type="button">Refresh Account</button>
+        <span class="status" id="accountStatus">Checking account...</span>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <span class="pill">Required</span>
+        <span class="status">Sign in before creating sessions or generating invoices. Browser requests use your secure account cookie.</span>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Connection</h2>
       <div class="row">
         <label>API Base</label>
         <input id="apiBase" placeholder="http://localhost:8080"/>
-        <label>API Key</label>
-        <input id="apiKey" placeholder="x-api-key"/>
       </div>
       <div style="height:10px"></div>
       <div class="row">
@@ -227,25 +240,55 @@
   const clock = ()=> $("clock").textContent = new Date().toLocaleString();
   setInterval(clock, 1000); clock();
 
+  let authenticatedAccount = null;
+  const authRequiredButtons = ["btnNewSession","btnStart","btnStop","btnClose","btnAutoTick","btnTickOnce","btnInvoiceJson"];
+
   function loadCfg(){
     $("apiBase").value = sessionStorage.getItem("syn_apiBase") || location.origin;
-    $("apiKey").value = sessionStorage.getItem("syn_apiKey") || "";
     $("sessionId").value = sessionStorage.getItem("syn_sessionId") || "";
   }
   function saveCfg(){
     sessionStorage.setItem("syn_apiBase", $("apiBase").value.trim());
-    sessionStorage.setItem("syn_apiKey", $("apiKey").value.trim());
     sessionStorage.setItem("syn_sessionId", $("sessionId").value.trim());
   }
 
-  async function api(path, opts){
+  function setAccountControls(account){
+    authenticatedAccount = account || null;
+    authRequiredButtons.forEach(id=>{ if($(id)) $(id).disabled = !authenticatedAccount; });
+    $("btnLogin").style.display = authenticatedAccount ? "none" : "inline-block";
+    $("btnLogout").style.display = authenticatedAccount ? "inline-block" : "none";
+    $("accountStatus").textContent = authenticatedAccount
+      ? `Signed in as ${authenticatedAccount.display_name || authenticatedAccount.id}`
+      : "Not signed in. Please sign in to create sessions and generate invoices.";
+  }
+
+  async function refreshAccount(){
+    const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin;
+    try{
+      const res = await fetch(base + "/me", { credentials:"include" });
+      if(!res.ok){ setAccountControls(null); return null; }
+      const data = await res.json();
+      setAccountControls(data.account);
+      return data.account;
+    }catch(e){
+      setAccountControls(null);
+      $("accountStatus").textContent = "Could not check account: " + e.message;
+      return null;
+    }
+  }
+
+  function requireSignedIn(){
+    if(!authenticatedAccount) throw new Error("Please sign in with Google before using browser metering.");
+  }
+
+  async function api(path, opts={}){
+    requireSignedIn();
     const base = $("apiBase").value.trim().replace(/\/+$/,"");
-    const key = $("apiKey").value.trim();
     if(!base) throw new Error("Missing API Base");
-    if(!key) throw new Error("Missing API Key");
     const res = await fetch(base + path, {
       ...opts,
-      headers: { "content-type":"application/json", "x-api-key": key, ...(opts && opts.headers ? opts.headers : {}) }
+      credentials:"include",
+      headers: { "content-type":"application/json", ...(opts && opts.headers ? opts.headers : {}) }
     });
     const data = await res.json().catch(()=> ({}));
     if(!res.ok) throw new Error(data?.error || ("HTTP " + res.status));
@@ -310,7 +353,7 @@
   $("btnPing").addEventListener("click", async ()=>{
     try{
       saveCfg();
-      const h = await fetch($("apiBase").value.trim().replace(/\/+$/,"") + "/health");
+      const h = await fetch($("apiBase").value.trim().replace(/\/+$/,"") + "/health", { credentials:"include" });
       const j = await h.json();
       status("connStatus", j.ok ? "Connected" : "Not OK");
       await refreshCatalog();
@@ -390,6 +433,20 @@
     }catch(e){ status("ndspStatus","Error: "+e.message); }
   });
 
+  $("btnRefreshAccount").addEventListener("click", ()=> refreshAccount().then(account=>{
+    if(account) refreshCatalog().catch(e=>status("connStatus","Catalog error: " + e.message));
+  }));
+
+  $("btnLogout").addEventListener("click", async ()=>{
+    try{
+      const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin;
+      await fetch(base + "/auth/logout", { method:"POST", credentials:"include" });
+      setAuto(false);
+      setAccountControls(null);
+      status("meterStatus", "Logged out. Sign in to create or update sessions.");
+    }catch(e){ status("accountStatus", "Logout error: " + e.message); }
+  });
+
   $("btnNdspSend").addEventListener("click", async ()=>{
     try{
       saveCfg();
@@ -407,10 +464,10 @@
 
   // init
   loadCfg();
-  // best effort catalog
-  if($("apiKey").value.trim()){
-    $("btnPing").click();
-  }
+  setAccountControls(null);
+  refreshAccount().then(account=>{
+    if(account) $("btnPing").click();
+  });
 })();
 </script>
 </body>

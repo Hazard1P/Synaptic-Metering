@@ -41,6 +41,8 @@ export function requireApiKey(req, res, next){
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  req.apiKeyAuthenticated = true;
+  req.auth = { accountId: "api-key", scopes: ["*"] };
   next();
 }
 
@@ -68,6 +70,7 @@ export function loadAuthenticatedAccount(db){
           created_at: row.created_at,
           updated_at: row.updated_at
         };
+        req.auth = { accountId: row.id, scopes: ["*"] };
       }
       next();
     }catch(e){ next(e); }
