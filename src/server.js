@@ -17,7 +17,8 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
+import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
+import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
@@ -173,15 +174,13 @@ app.post("/sessions", (req,res,next)=>{
   try{
     requireScope(req, "sessions:write");
     const body = parseBody(CreateSessionBody, req.body);
-    if(body.account_id && body.account_id !== req.auth.accountId){
-      return res.status(403).json({ error:"session_account_forbidden" });
-    }
+    const accountId = req.authAccount?.id ?? null;
     const id = "sess_" + nanoid(16);
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
-    `).run(id, req.authAccount?.id ?? null, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: req.authAccount?.id ?? null });
+    `).run(id, accountId, body.seat_id ?? null);
+    res.status(201).json({ id, status:"open", account_id: accountId });
   }catch(e){ next(e); }
 });
 
@@ -273,9 +272,7 @@ app.get("/sessions/:id/summary", (req,res)=>{
 
 
 // --- invoices
-app.post("/invoices/from-session", (req,res)=>{
-  if(!req.authAccount) return res.status(403).json({ error:"account_required" });
-
+app.post("/invoices/from-session", requireAccount, (req,res)=>{
   const { session_id } = req.body || {};
   if(!session_id) return res.status(400).json({ error:"missing_session_id" });
   const summary = computeSessionSummary(db, session_id);
@@ -287,7 +284,7 @@ app.post("/invoices/from-session", (req,res)=>{
     schema: "synaptics.invoice.v1",
     issued_at,
     session_id,
-    account_id: summary.session.account_id,
+    account_id: req.authAccount.id,
     seat_id: summary.session.seat_id,
     currency: summary.total.currency || "CAD",
     lines: summary.lines.map(l => ({
@@ -308,7 +305,98 @@ app.post("/invoices/from-session", (req,res)=>{
     }
   };
 
-  res.json({ invoice });
+  const id = "inv_" + nanoid(18);
+  db.prepare(`
+    INSERT INTO invoices (
+      id, account_id, session_id, source, status, verification_method,
+      accepted_at, verified_at, payload_json
+    )
+    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?)
+  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice));
+
+  res.status(201).json({ id, invoice });
+});
+
+app.get("/invoices", requireAccount, (req,res)=>{
+  const rows = db.prepare(`
+    SELECT id, account_id, session_id, source, status, verification_method,
+      accepted_at, verified_at, created_at, updated_at, payload_json
+    FROM invoices
+    WHERE account_id=?
+    ORDER BY created_at DESC, id DESC
+  `).all(req.authAccount.id);
+
+  res.json({
+    invoices: rows.map(row => ({
+      id: row.id,
+      account_id: row.account_id,
+      session_id: row.session_id,
+      source: row.source,
+      status: row.status,
+      verification_method: row.verification_method,
+      accepted_at: row.accepted_at,
+      verified_at: row.verified_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      invoice: JSON.parse(row.payload_json)
+    }))
+  });
+});
+
+
+app.post("/invoices/import", requireAccount, (req,res,next)=>{
+  try{
+    const body = parseBody(ImportInvoiceBody, req.body);
+    const payload = body.invoice ?? body.payload;
+    const verification = verifyInvoiceForAccount(db, {
+      accountId: req.authAccount.id,
+      sessionId: body.session_id ?? null,
+      payload
+    });
+
+    const id = "inv_" + nanoid(18);
+    const status = verification.status;
+    const verificationMethod = verification.accepted ? verification.verificationMethod : null;
+    const invoiceSessionId = verification.accepted
+      ? (body.session_id ?? verification.checked?.sessionIds?.[0] ?? null)
+      : null;
+    const verificationComplete = status !== "pending";
+
+    db.prepare(`
+      INSERT INTO invoices (
+        id, account_id, source, source_reference, session_id, status, verification_method,
+        verified_at, accepted_at, payload_json, created_at, updated_at
+      )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?,
+        CASE WHEN ? THEN datetime('now') ELSE NULL END,
+        CASE WHEN ? THEN datetime('now') ELSE NULL END,
+        ?, datetime('now'), datetime('now')
+      )
+    `).run(
+      id,
+      req.authAccount.id,
+      body.source,
+      body.source_reference ?? null,
+      invoiceSessionId,
+      status,
+      verificationMethod,
+      verificationComplete ? 1 : 0,
+      verification.accepted ? 1 : 0,
+      JSON.stringify(payload)
+    );
+
+    const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);
+    res.status(201).json({
+      invoice,
+      verification: {
+        status,
+        method: verificationMethod,
+        reason: verification.reason,
+        checked: verification.checked
+      }
+    });
+  }catch(e){ next(e); }
 });
 
 // --- NDSP endpoints (as referenced by the Genesis Core HTML)

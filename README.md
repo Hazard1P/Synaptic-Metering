@@ -120,6 +120,52 @@ COOKIE_SECURE=true
 
 Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
 
+## Production: SynapticSystems.ca web link
+
+Use a dedicated HTTPS deployment URL for this metering app, then link to that URL from SynapticSystems.ca. The URL can be a metering subdomain such as `https://metering.SynapticSystems.ca` or a routed path such as `https://SynapticSystems.ca/metering`, but the value must match the public URL that browsers use to reach the deployed app.
+
+Concrete production environment example:
+
+```bash
+PUBLIC_BASE_URL=https://<metering-subdomain-or-path>.SynapticSystems.ca
+CORS_ORIGINS=https://SynapticSystems.ca,https://www.SynapticSystems.ca,<metering-origin>
+GOOGLE_REDIRECT_URI=https://<metering-origin>/auth/google/callback
+COOKIE_SECURE=true
+TRUST_PROXY=true
+NODE_ENV=production
+```
+
+Replace `<metering-origin>` with the exact scheme and host that serves the app, for example `https://metering.SynapticSystems.ca`. If the app is mounted under a path, keep the origin in `CORS_ORIGINS` and include the mounted path in `PUBLIC_BASE_URL` and any reverse-proxy routing.
+
+### SynapticSystems.ca navigation setup
+
+- Add a normal HTTPS link on SynapticSystems.ca to the deployed metering app URL, for example a navigation item or button pointing to `PUBLIC_BASE_URL`.
+- Include both `https://SynapticSystems.ca` and `https://www.SynapticSystems.ca` in `CORS_ORIGINS` when pages from either host call this API from the browser.
+- Include the metering app's own browser origin in `CORS_ORIGINS` so the deployed console and app pages can call same-origin or app-origin API routes.
+- Avoid wildcard CORS in production; use exact origins only.
+
+### Google OAuth console setup
+
+In the Google Cloud Console OAuth client used by this app:
+
+1. Configure the OAuth client as a **Web application**.
+2. Add the deployed callback URL to **Authorized redirect URIs** exactly as configured in `GOOGLE_REDIRECT_URI`:
+   ```text
+   https://<metering-origin>/auth/google/callback
+   ```
+3. If the app is deployed under a path and the proxy preserves that path for auth routes, register the exact path-aware callback URL that Google will see.
+4. Confirm `GOOGLE_REDIRECT_URI` in the production environment exactly matches one authorized redirect URI, including scheme, host, path, and trailing slash behavior.
+
+### Cross-site embedding cookie requirement
+
+If SynapticSystems.ca navigates users directly to the metering app URL, the default HTTP-only auth session cookie can remain a first-party cookie. If the app will instead be embedded cross-site, for example in an iframe on `https://SynapticSystems.ca` while the app runs at `https://metering.SynapticSystems.ca`, update the cookie attributes in `src/lib/auth.js` so OAuth state and session cookies are emitted with:
+
+```js
+SameSite=None; Secure
+```
+
+That embedded mode also requires `COOKIE_SECURE=true`, HTTPS end-to-end from the browser, and a browser-compatible frame policy/CSP from the reverse proxy and application.
+
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
 - Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.
