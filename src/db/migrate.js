@@ -98,6 +98,28 @@ CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   payload_json TEXT NOT NULL,
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  verification_method TEXT NOT NULL,
+  accepted_at TEXT,
+  verified_at TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_account_id
+  ON invoices(account_id);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_session_id
+  ON invoices(session_id);
 `);
 
 const catalogColumns = [
