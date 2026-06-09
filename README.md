@@ -54,6 +54,16 @@ docker compose up -d --build
 Non-public API endpoints require one of:
 
 - `x-api-key: <key>` header. Store only comma-separated SHA-256 key digests in `API_KEY_DIGESTS`; do not store raw API keys in environment variables or config files.
+- A logged-in account session cookie created through `GET /auth/google/start`. Visitor-facing web pages should prefer this account flow; API keys are for administrative and integration clients.
+
+### Developer API-key examples
+
+The public `/` page is an account entry point for SynapticSystems.ca visitors. Keep API-key and curl examples here in the README for administrators and developers:
+
+```bash
+curl http://localhost:8080/health
+curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
+```
 
 ### Catalog
 - `GET /catalog` — list billable items parsed from the invoice template

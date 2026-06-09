@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Synaptics.Systems • Seconds Metering API</title>
+  <title>SynapticSystems.ca • Account Portal</title>
   <style>
     :root { color-scheme: dark; }
+    *{box-sizing:border-box;}
     body{
       margin:0;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
@@ -14,31 +15,68 @@
                   radial-gradient(900px 520px at 50% 90%, rgba(0,255,136,.10), transparent 60%),
                   #06080c;
       color:#eaf2ff;
+      min-height:100vh;
     }
-    .wrap{max-width:980px;margin:0 auto;padding:28px 18px 60px;}
+    .wrap{max-width:1040px;margin:0 auto;padding:28px 18px 60px;}
     .card{
       background: rgba(12,16,22,.72);
       border:1px solid rgba(255,255,255,.08);
       border-radius: 18px;
-      padding: 18px;
+      padding: 22px;
       box-shadow: 0 12px 50px rgba(0,0,0,.45);
       backdrop-filter: blur(10px);
     }
-    .top{display:flex;gap:16px;align-items:center;flex-wrap:wrap;}
+    .top{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
     img{max-width:100%;height:auto;}
-    h1{margin:14px 0 6px;font-size:24px;}
-    p{margin:6px 0;color:#b9c6db;line-height:1.5;}
-    code, pre{
-      background: rgba(0,0,0,.35);
-      border:1px solid rgba(255,255,255,.08);
-      border-radius: 12px;
-      padding: 12px;
-      display:block;
-      overflow:auto;
+    h1{margin:18px 0 8px;font-size:clamp(28px,5vw,52px);line-height:1.04;letter-spacing:-.04em;}
+    h2{margin:0 0 10px;font-size:18px;}
+    p{margin:8px 0;color:#b9c6db;line-height:1.55;}
+    a{color:#8fe3ff;text-decoration:none;}
+    a:hover{text-decoration:underline;}
+    .eyebrow{color:#8fe3ff;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;}
+    .lead{font-size:18px;max-width:760px;}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px;}
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:44px;
+      padding:10px 16px;
+      border:1px solid rgba(255,255,255,.14);
+      border-radius: 999px;
       color:#eaf2ff;
+      background: rgba(255,255,255,.06);
+      font-weight:700;
     }
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
+    .btn.primary{
+      background: linear-gradient(90deg, rgba(0,245,255,.24), rgba(124,77,255,.24), rgba(0,255,136,.20));
+      border-color: rgba(255,255,255,.22);
+    }
+    .btn:hover{text-decoration:none;border-color:rgba(143,227,255,.55);}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px;}
     @media (max-width:860px){ .grid{grid-template-columns:1fr;} }
+    .panel{
+      border:1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      padding: 16px;
+      background: rgba(0,0,0,.22);
+    }
+    .status-box{
+      border:1px solid rgba(143,227,255,.18);
+      border-radius: 16px;
+      padding: 16px;
+      background: rgba(0,245,255,.07);
+    }
+    .status-line{font-weight:800;color:#eaf2ff;}
+    .muted{font-size:13px;color:#9fb0c9;}
+    .notice{
+      margin-top:18px;
+      padding: 14px 16px;
+      border:1px solid rgba(255,211,106,.24);
+      border-radius:16px;
+      background: rgba(255,211,106,.08);
+      color:#ffe6a6;
+    }
     .pill{
       display:inline-block;
       padding:6px 10px;
@@ -49,54 +87,119 @@
       font-size:12px;
       background: rgba(0,0,0,.22);
     }
-    a{color:#8fe3ff;text-decoration:none;}
-    a:hover{text-decoration:underline;}
+    [hidden]{display:none !important;}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
+  <main class="wrap">
+    <section class="card">
       <div class="top">
         <img src="/public/synaptics-logo.svg" alt="Synaptics.Systems" width="520"/>
+        <a class="btn primary" id="signInTop" href="/auth/google/start">Sign in</a>
       </div>
-      <h1>Seconds Metering API</h1>
-      <p>
-        A production-ready metering service that parses your invoice catalog, tracks per-second usage,
-        and generates invoice JSON from session summaries.
+
+      <p class="eyebrow">SynapticSystems.ca visitor entry</p>
+      <h1>Welcome to the Synaptic Systems metering portal.</h1>
+      <p class="lead">
+        Sign in with your account to launch the console, open Genesis, and generate invoices from your metered sessions.
       </p>
-      <div>
-        <span class="pill">Catalog: /catalog</span>
-        <span class="pill">Sessions: /sessions</span>
-        <span class="pill">Invoice: /invoices/from-session</span>
-        <span class="pill">NDSP: /ndsp/state</span>
-        <span class="pill">NDSP: /ndsp/telemetry</span>
+
+      <div class="notice">
+        Invoice generation requires a logged-in account. Please sign in before creating sessions or generating invoice files from the web console.
       </div>
 
       <div class="grid">
-        <div>
-          <h1 style="font-size:18px;margin-top:18px;">Quick Test</h1>
-          <pre><code>curl -H "x-api-key: dev-key-1" {BASE}/health
-curl -H "x-api-key: dev-key-1" {BASE}/catalog</code></pre>
-          <p style="font-size:13px;color:#9fb0c9;">
-            Replace <b>{BASE}</b> with your server URL (ex: http://localhost:8080).
-          </p>
-        </div>
-        <div>
-          <h1 style="font-size:18px;margin-top:18px;">Security</h1>
-          <p style="font-size:13px;">
-            Use one API key per client/seat. Put this behind HTTPS (Nginx / Caddy / Cloudflare).
-          </p>
-          <pre><code>Header: x-api-key: &lt;your-key&gt;</code></pre>
-        </div>
+        <section class="panel status-box" aria-live="polite">
+          <h2>Account status</h2>
+          <p class="status-line" id="accountStatus">Checking your account…</p>
+          <p class="muted" id="accountDetail">We are loading <code>/me</code> to see whether you are already signed in.</p>
+          <div class="actions" id="signedOutActions">
+            <a class="btn primary" href="/auth/google/start">Sign in</a>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Account tools</h2>
+          <p id="lockedTools" class="muted">Sign in to unlock the console, Genesis, and invoice history links.</p>
+          <div class="actions" id="accountLinks" hidden>
+            <a class="btn primary" href="/console">Open console</a>
+            <a class="btn" href="/genesis">Open Genesis</a>
+            <a class="btn" href="/console#invoice-history">Invoice history</a>
+          </div>
+        </section>
       </div>
 
-      <p style="margin-top:18px;font-size:13px;color:#8ea2bf;">
-        Branding: Synaptics.Systems • Build: <span id="build"></span>
-      </p>
-    </div>
-  </div>
+      <div class="grid">
+        <section class="panel">
+          <h2>What you can do after signing in</h2>
+          <p>Create account-scoped metering sessions, track billable seconds, and export invoice JSON from session summaries.</p>
+          <div>
+            <span class="pill">Authenticated console</span>
+            <span class="pill">Genesis activity meter</span>
+            <span class="pill">Invoice generation</span>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Developers and administrators</h2>
+          <p>API-key and curl examples have moved out of this visitor page. See the project README for local testing, API-key rotation, and deployment notes.</p>
+        </section>
+      </div>
+
+      <p class="muted" style="margin-top:18px;">Branding: Synaptics.Systems • Page loaded: <span id="build"></span></p>
+    </section>
+  </main>
+
   <script>
-    document.getElementById("build").textContent = new Date().toISOString();
+    const $ = (id) => document.getElementById(id);
+
+    function showSignedOut(message){
+      $("accountStatus").textContent = "Signed out";
+      $("accountDetail").textContent = message || "Sign in to access your account tools.";
+      $("signedOutActions").hidden = false;
+      $("signInTop").hidden = false;
+      $("lockedTools").hidden = false;
+      $("accountLinks").hidden = true;
+    }
+
+    function showSignedIn(profile){
+      const account = profile.account || {};
+      const identities = profile.identities || [];
+      const primaryEmail = identities.find((identity) => identity.email)?.email;
+      const displayName = account.display_name || primaryEmail || account.id || "your account";
+
+      $("accountStatus").textContent = "Signed in as " + displayName;
+      $("accountDetail").textContent = account.id ? "Account ID: " + account.id : "Your account is active.";
+      $("signedOutActions").hidden = true;
+      $("signInTop").hidden = true;
+      $("lockedTools").hidden = true;
+      $("accountLinks").hidden = false;
+    }
+
+    async function loadAccountStatus(){
+      try{
+        const response = await fetch("/me", {
+          credentials: "same-origin",
+          headers: { "Accept": "application/json" }
+        });
+
+        if(response.ok){
+          showSignedIn(await response.json());
+          return;
+        }
+
+        if(response.status === 401){
+          showSignedOut("No active account session was found.");
+          return;
+        }
+
+        showSignedOut("Account status is unavailable right now. Please try signing in again.");
+      }catch(e){
+        showSignedOut("Account status could not be loaded. Check your connection and try again.");
+      }
+    }
+
+    $("build").textContent = new Date().toISOString();
+    loadAccountStatus();
   </script>
 </body>
 </html>
