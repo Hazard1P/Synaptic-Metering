@@ -6,16 +6,15 @@
     <span>API Base</span>
     <input id="apiBase" value="" placeholder="http://localhost:8080" style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:220px">
   </label>
-  <label style="display:flex;gap:6px;align-items:center;font-size:12px">
-    <span>API Key</span>
-    <input id="apiKey" value="" placeholder="x-api-key" style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:200px">
-  </label>
+  <a id="btnLogin" href="/auth/google/start" style="padding:7px 10px;border-radius:10px;border:1px solid #2a2a2a;background:#162033;color:#d8e6ff;text-decoration:none">Sign in with Google</a>
+  <button id="btnLogout" style="padding:7px 10px;border-radius:10px;border:1px solid #3a1f1f;background:#2a1414;color:#ffd8d8;cursor:pointer;display:none">Logout</button>
   <label style="display:flex;gap:6px;align-items:center;font-size:12px">
     <span>Session</span>
     <input id="sessionId" value="" placeholder="sess_..." style="padding:6px 8px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;min-width:220px">
   </label>
   <button id="btnAutofill" style="padding:7px 10px;border-radius:10px;border:1px solid #2a2a2a;background:#161616;color:#fff;cursor:pointer">Autofill Qty</button>
   <button id="btnGenerate" style="padding:7px 10px;border-radius:10px;border:1px solid #2a2a2a;background:#1c2a1c;color:#d8ffd8;cursor:pointer">Generate Invoice</button>
+  <span id="accountStatus" style="font-size:12px;opacity:.85">Checking account...</span>
   <span id="synapticsStatus" style="font-size:12px;opacity:.85"></span>
 </div>
 
@@ -24,22 +23,52 @@
   function $(id){ return document.getElementById(id); }
   function setStatus(msg){ const el = $("synapticsStatus"); if(el) el.textContent = msg || ""; }
 
+  let authenticatedAccount = null;
+
   function getConfig(){
     const fromSession = {
       apiBase: sessionStorage.getItem("syn_apiBase") || "",
-      apiKey: sessionStorage.getItem("syn_apiKey") || "",
       sessionId: sessionStorage.getItem("syn_sessionId") || ""
     };
     const fromUrl = new URL(location.href);
     const base = fromUrl.searchParams.get("base") || fromSession.apiBase || "";
     const session = fromUrl.searchParams.get("session") || fromSession.sessionId || "";
-    return { apiBase: base, apiKey: fromSession.apiKey, sessionId: session };
+    return { apiBase: base, sessionId: session };
   }
 
   function saveConfig(){
     sessionStorage.setItem("syn_apiBase", $("apiBase").value.trim());
-    sessionStorage.setItem("syn_apiKey", $("apiKey").value.trim());
     sessionStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+  }
+
+  function setAccountControls(account){
+    authenticatedAccount = account || null;
+    $("btnAutofill").disabled = !authenticatedAccount;
+    $("btnGenerate").disabled = !authenticatedAccount;
+    $("btnLogin").style.display = authenticatedAccount ? "none" : "inline-block";
+    $("btnLogout").style.display = authenticatedAccount ? "inline-block" : "none";
+    $("accountStatus").textContent = authenticatedAccount
+      ? `Signed in as ${authenticatedAccount.display_name || authenticatedAccount.id}`
+      : "Sign in to autofill quantities or generate invoices.";
+  }
+
+  async function refreshAccount(){
+    const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin;
+    try{
+      const res = await fetch(base + "/me", { credentials:"include" });
+      if(!res.ok){ setAccountControls(null); return null; }
+      const data = await res.json();
+      setAccountControls(data.account);
+      return data.account;
+    }catch(e){
+      setAccountControls(null);
+      $("accountStatus").textContent = "Could not check account: " + e.message;
+      return null;
+    }
+  }
+
+  function requireSignedIn(){
+    if(!authenticatedAccount) throw new Error("Please sign in with Google before using browser invoice tools.");
   }
 
   function slugId(label){
@@ -50,16 +79,15 @@
       .slice(0, 120);
   }
 
-  async function apiFetch(path, opts){
+  async function apiFetch(path, opts={}){
+    requireSignedIn();
     const base = $("apiBase").value.trim().replace(/\/+$/,"");
-    const key = $("apiKey").value.trim();
     if(!base) throw new Error("Missing API Base");
-    if(!key) throw new Error("Missing API Key");
     const res = await fetch(base + path, {
       ...opts,
+      credentials:"include",
       headers: {
         "content-type": "application/json",
-        "x-api-key": key,
         ...(opts && opts.headers ? opts.headers : {})
       }
     });
@@ -222,15 +250,23 @@
 
   const cfg = getConfig();
   $("apiBase").value = cfg.apiBase || (location.origin === "null" ? "http://localhost:8080" : location.origin);
-  $("apiKey").value = cfg.apiKey || "";
   $("sessionId").value = cfg.sessionId || "";
 
+  setAccountControls(null);
   $("btnAutofill").addEventListener("click", ()=> autofillFromSession().catch(e=>setStatus("Error: " + e.message)));
   $("btnGenerate").addEventListener("click", ()=> generateInvoice().catch(e=>setStatus("Error: " + e.message)));
+  $("btnLogout").addEventListener("click", async ()=>{
+    try{
+      const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin;
+      await fetch(base + "/auth/logout", { method:"POST", credentials:"include" });
+      setAccountControls(null);
+      setStatus("Logged out. Sign in to use invoice tools.");
+    }catch(e){ setStatus("Logout error: " + e.message); }
+  });
 
-  if($("sessionId").value.trim() && $("apiKey").value.trim()){
-    autofillFromSession().catch(()=>{});
-  }
+  refreshAccount().then(account=>{
+    if(account && $("sessionId").value.trim()) autofillFromSession().catch(()=>{});
+  });
 })();
 </script>
 
