@@ -273,7 +273,7 @@ app.get("/sessions/:id/summary", (req,res)=>{
 
 
 // --- invoices
-app.post("/invoices/from-session", (req,res)=>{
+app.post("/invoices/from-session", requireAccount, (req,res)=>{
   const { session_id } = req.body || {};
   if(!session_id) return res.status(400).json({ error:"missing_session_id" });
   const summary = computeSessionSummary(db, session_id);
@@ -285,7 +285,7 @@ app.post("/invoices/from-session", (req,res)=>{
     schema: "synaptics.invoice.v1",
     issued_at,
     session_id,
-    account_id: summary.session.account_id,
+    account_id: req.authAccount.id,
     seat_id: summary.session.seat_id,
     currency: summary.total.currency || "CAD",
     lines: summary.lines.map(l => ({
@@ -306,7 +306,42 @@ app.post("/invoices/from-session", (req,res)=>{
     }
   };
 
-  res.json({ invoice });
+  const id = "inv_" + nanoid(18);
+  db.prepare(`
+    INSERT INTO invoices (
+      id, account_id, session_id, source, status, verification_method,
+      accepted_at, verified_at, payload_json
+    )
+    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?)
+  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice));
+
+  res.status(201).json({ id, invoice });
+});
+
+app.get("/invoices", requireAccount, (req,res)=>{
+  const rows = db.prepare(`
+    SELECT id, account_id, session_id, source, status, verification_method,
+      accepted_at, verified_at, created_at, updated_at, payload_json
+    FROM invoices
+    WHERE account_id=?
+    ORDER BY created_at DESC, id DESC
+  `).all(req.authAccount.id);
+
+  res.json({
+    invoices: rows.map(row => ({
+      id: row.id,
+      account_id: row.account_id,
+      session_id: row.session_id,
+      source: row.source,
+      status: row.status,
+      verification_method: row.verification_method,
+      accepted_at: row.accepted_at,
+      verified_at: row.verified_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      invoice: JSON.parse(row.payload_json)
+    }))
+  });
 });
 
 // --- NDSP endpoints (as referenced by the Genesis Core HTML)
