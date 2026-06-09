@@ -758,7 +758,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   async function ensureSession(){
     let sid = $('synSession').value.trim();
     if(sid) return sid;
-    const r = await api('/sessions', { method:'POST', body:JSON.stringify({ account_id:'thinking-meter', seat_id:'genesis-core' }) });
+    const r = await api('/sessions', { method:'POST', body:JSON.stringify({ seat_id:'genesis-core' }) });
     $('synSession').value = r.id; saveCfg();
     return r.id;
   }
