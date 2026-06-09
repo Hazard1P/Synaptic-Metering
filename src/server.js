@@ -174,15 +174,13 @@ app.post("/sessions", (req,res,next)=>{
   try{
     requireScope(req, "sessions:write");
     const body = parseBody(CreateSessionBody, req.body);
-    if(body.account_id && body.account_id !== req.auth.accountId){
-      return res.status(403).json({ error:"session_account_forbidden" });
-    }
+    const accountId = req.authAccount?.id ?? null;
     const id = "sess_" + nanoid(16);
     db.prepare(`
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
-    `).run(id, req.authAccount?.id ?? null, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: req.authAccount?.id ?? null });
+    `).run(id, accountId, body.seat_id ?? null);
+    res.status(201).json({ id, status:"open", account_id: accountId });
   }catch(e){ next(e); }
 });
 
