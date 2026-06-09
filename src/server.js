@@ -17,7 +17,8 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { CreateSessionBody, StartBody, HeartbeatBody, parseBody } from "./lib/validate.js";
+import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
+import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
@@ -307,6 +308,62 @@ app.post("/invoices/from-session", (req,res)=>{
   };
 
   res.json({ invoice });
+});
+
+
+app.post("/invoices/import", requireAccount, (req,res,next)=>{
+  try{
+    const body = parseBody(ImportInvoiceBody, req.body);
+    const payload = body.invoice ?? body.payload;
+    const verification = verifyInvoiceForAccount(db, {
+      accountId: req.authAccount.id,
+      sessionId: body.session_id ?? null,
+      payload
+    });
+
+    const id = "inv_" + nanoid(18);
+    const status = verification.status;
+    const verificationMethod = verification.accepted ? verification.verificationMethod : null;
+    const invoiceSessionId = verification.accepted
+      ? (body.session_id ?? verification.checked?.sessionIds?.[0] ?? null)
+      : null;
+    const verificationComplete = status !== "pending";
+
+    db.prepare(`
+      INSERT INTO invoices (
+        id, account_id, source, source_reference, session_id, status, verification_method,
+        verified_at, accepted_at, payload_json, created_at, updated_at
+      )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?,
+        CASE WHEN ? THEN datetime('now') ELSE NULL END,
+        CASE WHEN ? THEN datetime('now') ELSE NULL END,
+        ?, datetime('now'), datetime('now')
+      )
+    `).run(
+      id,
+      req.authAccount.id,
+      body.source,
+      body.source_reference ?? null,
+      invoiceSessionId,
+      status,
+      verificationMethod,
+      verificationComplete ? 1 : 0,
+      verification.accepted ? 1 : 0,
+      JSON.stringify(payload)
+    );
+
+    const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);
+    res.status(201).json({
+      invoice,
+      verification: {
+        status,
+        method: verificationMethod,
+        reason: verification.reason,
+        checked: verification.checked
+      }
+    });
+  }catch(e){ next(e); }
 });
 
 // --- NDSP endpoints (as referenced by the Genesis Core HTML)
