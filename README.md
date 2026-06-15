@@ -7,6 +7,7 @@ This service does 3 things:
 3) **NDSP Compatibility**: implements the endpoints that your NDPS/NDSP Genesis Core HTML expects:
    - `GET /ndsp/state`
    - `POST /ndsp/telemetry`
+4) **Anchored Intelligence Governance**: exposes the permanent non-extractive intelligence anchors used by the 1 Hz Seconds Of Intelligence metering model, including Major Ursa, Cassiopeia, and isolated blackhole mesh references.
 
 > Works offline-first: the server stores no personal identifiers by default. You can add external IDs as *optional* fields if your compliance program needs them.
 
@@ -64,6 +65,21 @@ The public `/` page is an account entry point for SynapticSystems.ca visitors. K
 curl http://localhost:8080/health
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
+
+### Admin database
+- `GET /admin/accounts` — list internal accounts and roles. Requires an admin account session or a trusted API key.
+
+Seed or promote a local admin account during migration with:
+
+```bash
+ADMIN_ACCOUNT_ID=acct_admin ADMIN_DISPLAY_NAME="Synaptics Admin" npm run migrate
+```
+
+### Anchored Intelligence
+- `GET /intelligence/anchors` — public description of the permanent anchored asset map used for 1 tick/second intelligence metering.
+- `GET /intelligence/state` — authenticated state payload for `Seconds_Of_Intelligence`, including the five-day rolling Unix epoch, invoice A1 key, optional network `master_key`, and moderation status.
+
+The service treats Major Ursa, Cassiopeia, and isolated blackholes as permanent universe-mesh reference assets: they are considered in data/physics and governance calculations, but they are not extracted or “pulled through” into customer records. The A1 invoice key binds a single invoice to `Operation:(Seconds_Of_Intelligence)`. A `master_key` represents the network genesis core and is intentionally not tied to one invoice.
 
 ### Catalog
 - `GET /catalog` — list billable items parsed from the invoice template
@@ -175,6 +191,9 @@ SameSite=None; Secure
 ```
 
 That embedded mode also requires `COOKIE_SECURE=true`, HTTPS end-to-end from the browser, and a browser-compatible frame policy/CSP from the reverse proxy and application.
+
+## Serverless deployment notes
+If the platform reports that a “serverless function has stopped working,” verify that the handler imports the exported Express `app` instead of starting a second listener. This code only calls `listen()` when `SERVERLESS` is not set to `true` and `NODE_ENV` is not `test`; serverless wrappers should set `SERVERLESS=true` and export/use `app` from `src/server.js`.
 
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.

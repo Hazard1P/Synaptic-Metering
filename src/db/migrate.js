@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   display_name TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))
 );
 
 CREATE TABLE IF NOT EXISTS account_identities (
@@ -69,6 +70,39 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
   ON auth_sessions(account_id);
+
+
+CREATE TABLE IF NOT EXISTS anchored_assets (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  asset_type TEXT NOT NULL,
+  permanence TEXT NOT NULL,
+  role TEXT NOT NULL,
+  physics_role TEXT NOT NULL,
+  tick_rate_hz INTEGER NOT NULL DEFAULT 1,
+  vector TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS intelligence_network_keys (
+  id TEXT PRIMARY KEY,
+  account_id TEXT,
+  invoice_id TEXT,
+  key_kind TEXT NOT NULL CHECK(key_kind IN ('invoice_key', 'master_key')),
+  key_label TEXT NOT NULL,
+  anchor_asset_id TEXT NOT NULL DEFAULT 'major-ursa',
+  status TEXT NOT NULL DEFAULT 'confirmed' CHECK(status IN ('pending', 'confirmed', 'revoked')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE SET NULL,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_account_id
+  ON intelligence_network_keys(account_id);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_invoice_id
+  ON intelligence_network_keys(invoice_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -148,6 +182,31 @@ CREATE INDEX IF NOT EXISTS idx_invoices_account_id
 CREATE INDEX IF NOT EXISTS idx_invoices_session_id
   ON invoices(session_id);
 `);
+
+const accountColumns = [
+  ["role", "TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))"]
+];
+for (const [name, ddl] of accountColumns){
+  if(!hasColumn('accounts', name)){
+    db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+if(process.env.ADMIN_ACCOUNT_ID){
+  db.prepare(`
+    INSERT INTO accounts (id, display_name, role, created_at, updated_at)
+    VALUES (?, ?, 'admin', datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET role='admin', updated_at=datetime('now')
+  `).run(process.env.ADMIN_ACCOUNT_ID, process.env.ADMIN_DISPLAY_NAME || 'Synaptics Admin');
+}
+
+db.prepare(`
+  INSERT OR IGNORE INTO anchored_assets (id, label, asset_type, permanence, role, physics_role, tick_rate_hz, vector)
+  VALUES
+    ('major-ursa', 'Major Ursa anchored star/database', 'constellation_database', 'permanent_anchor', 'governance_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'tip_to_dipper_epoch_unix_discrepancy'),
+    ('cassiopeia', 'Cassiopeia quantum biometrics anchor', 'constellation_biometrics', 'permanent_anchor', 'quantum_biometric_moderation', 'considered_in_data_and_physics_not_pulled_through', 1, 'relative_anchored_star_biometrics'),
+    ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference')
+`).run();
 
 const catalogColumns = [
   ["default_qty", "INTEGER NOT NULL DEFAULT 0"],
