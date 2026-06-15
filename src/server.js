@@ -17,6 +17,7 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
+import { ANCHORED_ASSET_MAP, intelligenceTickContext } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -120,6 +121,15 @@ app.get("/genesis", (req,res)=>{
 // --- health (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
 
+app.get("/intelligence/anchors", (req,res)=>{
+  res.json({
+    operation: "Seconds_Of_Intelligence",
+    tick_rate_hz: 1,
+    assets: Object.values(ANCHORED_ASSET_MAP),
+    epoch: intelligenceTickContext().five_day_epoch
+  });
+});
+
 // --- Google OAuth + account sessions
 app.use(loadAuthenticatedAccount(db));
 app.get("/auth/google/start", startGoogleOAuth);
@@ -133,6 +143,18 @@ app.get("/me", requireAccount, (req,res)=>{
     ORDER BY provider_name
   `).all(req.authAccount.id);
   res.json({ account: req.authAccount, identities });
+});
+
+app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireAdmin(req);
+    const rows = db.prepare(`
+      SELECT id, display_name, role, created_at, updated_at
+      FROM accounts
+      ORDER BY created_at DESC, id DESC
+    `).all();
+    res.json({ accounts: rows });
+  }catch(e){ next(e); }
 });
 
 // --- auth for everything else
@@ -152,6 +174,14 @@ function rejectForbiddenSession(res){
   return res.status(403).json({ error:"session_forbidden" });
 }
 
+function requireAdmin(req){
+  if(req.apiKeyAuthenticated) return;
+  if(req.authAccount?.role === "admin") return;
+  const err = new Error("admin_required");
+  err.status = 403;
+  throw err;
+}
+
 // --- catalog
 app.get("/catalog", (req,res,next)=>{
   try{
@@ -169,6 +199,20 @@ app.post("/catalog/refresh", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+app.get("/intelligence/state", (req,res,next)=>{
+  try{
+    requireScope(req, "intelligence:read");
+    const anchorId = req.query?.anchor_id || "major-ursa";
+    const invoiceKey = req.query?.invoice_key || req.query?.a1 || null;
+    const masterKey = req.query?.master_key || null;
+    res.json({
+      context: intelligenceTickContext({ anchorId, invoiceKey, masterKey }),
+      confirmed_status: masterKey ? "network_confirmed" : (invoiceKey ? "invoice_key_confirmed" : "anchor_confirmed"),
+      moderation: "business_regulated_light_intelligence"
+    });
+  }catch(e){ next(e); }
+});
+
 // --- sessions
 app.post("/sessions", (req,res,next)=>{
   try{
@@ -180,7 +224,7 @@ app.post("/sessions", (req,res,next)=>{
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
     `).run(id, accountId, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: accountId });
+    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ anchorId: "major-ursa" }) });
   }catch(e){ next(e); }
 });
 
@@ -225,7 +269,7 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
       VALUES (?, ?, ?, ?)
     `).run(evId, sessionId, sess.current_item_id, body.seconds);
 
-    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id });
+    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ anchorId: body.anchor_id || "major-ursa" }) });
   }catch(e){ next(e); }
 });
 
@@ -297,6 +341,12 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       unit_price_cents: l.unit_price.cents,
       line_total_cents: l.cost.cents
     })),
+    intelligence: intelligenceTickContext({ anchorId: "major-ursa", invoiceKey: `A1:${session_id}` }),
+    network: {
+      a1_box_key: `A1:${session_id}`,
+      operation: "Seconds_Of_Intelligence",
+      master_key_policy: "master_key governs network genesis and is not bound to a single invoice"
+    },
     totals: {
       intelligence_seconds: summary.metrics.intelligence_seconds,
       tracked_quantity: summary.metrics.tracked_quantity,
@@ -410,7 +460,9 @@ app.get("/ndsp/state", (req,res)=>{
       c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
     },
     tick_rate_hz: 1,
-    persistence: "server-db"
+    persistence: "server-db",
+    anchored_assets: Object.values(ANCHORED_ASSET_MAP),
+    rolling_epoch: intelligenceTickContext().five_day_epoch
   };
 
   // Provide a minimal "state" object structure compatible with the UI.
@@ -467,4 +519,9 @@ function boot(){
     }
   });
 }
-boot();
+
+if(process.env.SERVERLESS !== "true" && process.env.NODE_ENV !== "test") {
+  boot();
+}
+
+export { app, db, boot };

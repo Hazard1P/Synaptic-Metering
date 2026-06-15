@@ -201,7 +201,7 @@ export function loadAuthenticatedAccount(db){
       const sessionId = parseCookies(req)[SESSION_COOKIE_NAME];
       if(!sessionId) return next();
       const row = db.prepare(`
-        SELECT s.id AS session_id, s.expires_at, a.id, a.display_name, a.created_at, a.updated_at
+        SELECT s.id AS session_id, s.expires_at, a.id, a.display_name, a.role, a.created_at, a.updated_at
         FROM auth_sessions s
         JOIN accounts a ON a.id = s.account_id
         WHERE s.id=? AND s.expires_at > datetime('now')
@@ -211,6 +211,7 @@ export function loadAuthenticatedAccount(db){
         req.authAccount = {
           id: row.id,
           display_name: row.display_name,
+          role: row.role || "user",
           created_at: row.created_at,
           updated_at: row.updated_at
         };
