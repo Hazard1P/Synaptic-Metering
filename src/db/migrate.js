@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   UNIQUE(account_id, provider_name)
 );
 
+CREATE TABLE IF NOT EXISTS account_business_associations (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  provider_name TEXT NOT NULL,
+  association_kind TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  UNIQUE(account_id, provider_name, association_kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_business_associations_account_id
+  ON account_business_associations(account_id);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,

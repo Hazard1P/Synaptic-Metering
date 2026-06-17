@@ -6,6 +6,19 @@ const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS || 30);
 
 
+function parseEmailList(value){
+  return (value || "")
+    .split(",")
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function verifiedGoogleEmail(claims){
+  const email = String(claims.email || "").trim().toLowerCase();
+  const emailVerified = claims.email_verified === true || claims.email_verified === "true";
+  return email && emailVerified ? email : "";
+}
+
 function parseDigests(value){
   return (value || "")
     .split(",")
@@ -126,6 +139,27 @@ async function verifyGoogleIdToken(idToken, audience){
   if(claims.aud !== audience) throw new Error("google_id_token_audience_mismatch");
   if(claims.exp && Number(claims.exp) * 1000 < Date.now()) throw new Error("google_id_token_expired");
   return claims;
+}
+
+function assertAllowedEmail(claims){
+  const allowed = parseEmailList(process.env.GOOGLE_ALLOWED_EMAILS);
+  if(allowed.length === 0) return;
+
+  const email = verifiedGoogleEmail(claims);
+  if(!email || !allowed.includes(email)){
+    const err = new Error("google_email_not_allowed");
+    err.status = 403;
+    throw err;
+  }
+}
+
+function googleAccountPolicy(claims){
+  const email = verifiedGoogleEmail(claims);
+  return {
+    email,
+    isAdmin: Boolean(email && parseEmailList(process.env.ADMIN_GOOGLE_EMAILS).includes(email)),
+    isBusinessAssociated: Boolean(email && parseEmailList(process.env.BUSINESS_GOOGLE_EMAILS).includes(email))
+  };
 }
 
 function assertAllowedDomain(claims){
@@ -265,9 +299,10 @@ export function googleOAuthCallback(db){
       const tokenSet = await exchangeGoogleCode(req, code);
       if(!tokenSet.id_token) return res.status(401).json({ error: "missing_id_token" });
       const claims = await verifyGoogleIdToken(tokenSet.id_token, requireEnv("GOOGLE_CLIENT_ID"));
+      assertAllowedEmail(claims);
       assertAllowedDomain(claims);
 
-      const account = linkGoogleIdentity(db, claims, tokenSet);
+      const account = linkGoogleIdentity(db, claims, tokenSet, googleAccountPolicy(claims));
       const authSessionId = "authsess_" + nanoid(32);
       db.prepare(`
         INSERT INTO auth_sessions (id, account_id, expires_at)
@@ -281,11 +316,12 @@ export function googleOAuthCallback(db){
   };
 }
 
-function linkGoogleIdentity(db, claims, tokenSet){
+function linkGoogleIdentity(db, claims, tokenSet, accountPolicy = {}){
   const now = new Date().toISOString();
   const email = claims.email || null;
   const emailVerified = claims.email_verified === true || claims.email_verified === "true" ? 1 : 0;
   const displayName = claims.name || email || "Google account";
+  const role = accountPolicy.isAdmin ? "admin" : "user";
 
   const existing = db.prepare(`
     SELECT a.*
@@ -299,22 +335,32 @@ function linkGoogleIdentity(db, claims, tokenSet){
     if(!account){
       const accountId = "acct_" + nanoid(18);
       db.prepare(`
-        INSERT INTO accounts (id, display_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
-      `).run(accountId, displayName, now, now);
+        INSERT INTO accounts (id, display_name, role, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(accountId, displayName, role, now, now);
       db.prepare(`
         INSERT INTO account_identities (id, account_id, provider_name, provider_subject, email, email_verified, created_at, updated_at)
         VALUES (?, ?, 'google', ?, ?, ?, ?, ?)
       `).run("ident_" + nanoid(18), accountId, claims.sub, email, emailVerified, now, now);
       account = db.prepare("SELECT * FROM accounts WHERE id=?").get(accountId);
     }else{
-      db.prepare("UPDATE accounts SET display_name=?, updated_at=? WHERE id=?").run(displayName, now, existing.id);
+      db.prepare("UPDATE accounts SET display_name=?, role=CASE WHEN ? = 'admin' THEN 'admin' ELSE role END, updated_at=? WHERE id=?").run(displayName, role, now, existing.id);
       db.prepare(`
         UPDATE account_identities
         SET email=?, email_verified=?, updated_at=?
         WHERE provider_name='google' AND provider_subject=?
       `).run(email, emailVerified, now, claims.sub);
       account = db.prepare("SELECT * FROM accounts WHERE id=?").get(existing.id);
+    }
+
+    if(accountPolicy.isBusinessAssociated){
+      db.prepare(`
+        INSERT INTO account_business_associations (id, account_id, provider_name, association_kind, source, created_at, updated_at)
+        VALUES (?, ?, 'google', 'business_email_allowlist', 'BUSINESS_GOOGLE_EMAILS', ?, ?)
+        ON CONFLICT(account_id, provider_name, association_kind) DO UPDATE SET
+          source=excluded.source,
+          updated_at=excluded.updated_at
+      `).run("bizassoc_" + nanoid(18), account.id, now, now);
     }
 
     if(tokenRetentionEnabled()){
