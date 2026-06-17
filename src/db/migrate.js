@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   session_id TEXT NOT NULL,
   item_id TEXT NOT NULL,
   seconds INTEGER NOT NULL,
+  event_kind TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment')),
   at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
@@ -200,6 +201,16 @@ CREATE INDEX IF NOT EXISTS idx_invoices_account_id
 CREATE INDEX IF NOT EXISTS idx_invoices_session_id
   ON invoices(session_id);
 `);
+
+
+const usageEventColumns = [
+  ["event_kind", "TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment'))"]
+];
+for (const [name, ddl] of usageEventColumns){
+  if(!hasColumn('usage_events', name)){
+    db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
+  }
+}
 
 const accountColumns = [
   ["role", "TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))"]

@@ -394,13 +394,29 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
-    const evId = "ev_" + nanoid(18);
+    const liveEventId = "ev_" + nanoid(18);
     db.prepare(`
-      INSERT INTO usage_events (id, session_id, item_id, seconds)
-      VALUES (?, ?, ?, ?)
-    `).run(evId, sessionId, sess.current_item_id, body.seconds);
+      INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
+      VALUES (?, ?, ?, ?, 'live_tick')
+    `).run(liveEventId, sessionId, sess.current_item_id, body.seconds);
 
-    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" }) });
+    const recoveredSeconds = body.recovered_seconds || 0;
+    if(recoveredSeconds > 0){
+      const recoveryEventId = "ev_" + nanoid(18);
+      db.prepare(`
+        INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
+        VALUES (?, ?, ?, ?, 'recovery_adjustment')
+      `).run(recoveryEventId, sessionId, sess.current_item_id, recoveredSeconds);
+    }
+
+    res.json({
+      ok:true,
+      added_seconds: body.seconds + recoveredSeconds,
+      live_seconds: body.seconds,
+      recovered_seconds: recoveredSeconds,
+      item_id: sess.current_item_id,
+      intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
+    });
   }catch(e){ next(e); }
 });
 
@@ -466,6 +482,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       item_id: l.item_id,
       description: l.label,
       seconds: l.seconds,
+      live_seconds: l.live_seconds,
+      recovery_adjustment_seconds: l.recovery_adjustment_seconds,
       quantity: l.quantity,
       quantity_unit: l.quantity_unit,
       auto_increment_by: l.auto_increment_by,
@@ -480,6 +498,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     },
     totals: {
       intelligence_seconds: summary.metrics.intelligence_seconds,
+      live_tick_seconds: summary.metrics.live_tick_seconds,
+      recovery_adjustment_seconds: summary.metrics.recovery_adjustment_seconds,
       tracked_quantity: summary.metrics.tracked_quantity,
       subtotal_cents: summary.total.cents,
       total_cents: summary.total.cents

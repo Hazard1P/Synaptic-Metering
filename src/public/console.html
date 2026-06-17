@@ -105,7 +105,7 @@
     <img src="/public/synaptics-logo.svg" alt="Synaptics.Systems"/>
     <div>
       <div style="font-weight:800">NDSP Genesis • Seconds Console</div>
-      <div class="meta">View the invoice PDF, connect to metering, and monitor NDSP state.</div>
+      <div class="meta">View the invoice PDF, connect to one-second metering, and monitor NDSP state.</div>
     </div>
   </div>
   <div class="meta" id="clock"></div>
@@ -134,7 +134,7 @@
       <h2>Invoice HTML (Auto-fill)</h2>
       <div class="row">
         <a class="pill" href="/templates/Invoice.html" target="_blank" rel="noreferrer">Open Invoice.html</a>
-        <span class="status">Use the top bar in Invoice.html to autofill Qty from session seconds.</span>
+        <span class="status">Use the top bar in Invoice.html to autofill Qty from metered seconds; each heartbeat is one metered second.</span>
       </div>
     </div>
   </div>
@@ -208,7 +208,7 @@
       </div>
       <div style="height:10px"></div>
       <div class="row">
-        <button class="primary" id="btnAutoTick">Auto Heartbeat (1s)</button>
+        <button class="primary" id="btnAutoTick">Auto Heartbeat (1 metered second)</button>
         <button id="btnTickOnce">+1 second</button>
         <button class="primary" id="btnInvoiceJson">Generate Invoice JSON</button>
       </div>
@@ -388,7 +388,7 @@
     }else{
       if(hbTimer) clearInterval(hbTimer);
       hbTimer = null;
-      $("btnAutoTick").textContent = "Auto Heartbeat (1s)";
+      $("btnAutoTick").textContent = "Auto Heartbeat (1 metered second)";
     }
   }
 

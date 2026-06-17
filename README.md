@@ -100,7 +100,7 @@ The service treats Major Ursa, Cassiopeia, and isolated blackholes as permanent 
 ### Sessions & Seconds
 - `POST /sessions` — create session
 - `POST /sessions/:id/start` — start metering an item (one at a time)
-- `POST /sessions/:id/heartbeat` — add seconds (client calls every second)
+- `POST /sessions/:id/heartbeat` — record one live metered second per call; optional `recovered_seconds` records a separate recovery adjustment for missed ticks
 - `POST /sessions/:id/stop` — stop current item
 - `GET /sessions/:id/summary` — seconds + cost by item
 
@@ -283,10 +283,10 @@ If you see an `invalid ELF header` error, the project was copied with `node_modu
 
 
 ## Auto-tracked Quantity
-- Heartbeats still add `seconds`, but invoice quantity now auto-increases from the accumulated metered seconds.
+- Live heartbeats must use `seconds: 1`; each heartbeat represents exactly one metered second, while optional `recovered_seconds` is recorded as a separate recovery adjustment for missed ticks.
 - Each invoice line now includes `quantity`, `quantity_unit`, and `auto_increment_by`.
 - `GET /sessions/:id/summary` now returns `metrics.intelligence_seconds` and `metrics.tracked_quantity`.
-- `POST /invoices/from-session` now emits invoice totals with both total metered seconds and tracked quantity.
+- `POST /invoices/from-session` now emits invoice totals with total metered seconds, live one-second tick seconds, recovery adjustment seconds, and tracked quantity.
 
 
 ## Genesis integration
@@ -300,7 +300,7 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 
 ### Notes
 - Enter your API key in the Genesis overlay once per tab/session. It is stored only in sessionStorage and is cleared when the browser session ends.
-- Start the thinking meter, then interact with the page. Quantity and invoice totals will rise as active seconds are recorded.
+- Start the thinking meter, then interact with the page. Each heartbeat represents one metered second; quantity and invoice totals will rise as active seconds are recorded.
 - When activity stops for ~5 seconds, the page pauses metering automatically.
 
 ## Security Baseline
