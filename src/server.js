@@ -85,6 +85,47 @@ function trustProxyValue(){
 
 const trustProxySetting = trustProxyValue();
 
+function publicBaseUrl(req){
+  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
+  const base = configured || `${req.protocol}://${req.get("host")}`;
+  return base.replace(/\/+$/, "");
+}
+
+function absolutePublicUrl(req, pathname){
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return `${publicBaseUrl(req)}${normalizedPath}`;
+}
+
+function escapeXml(value){
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function sitemapXml(req){
+  const paths = [
+    "/",
+    "/console",
+    "/genesis",
+    "/map/dyson-sphere-ring-1",
+    "/public/dyson-sphere-ring-1-map.svg"
+  ];
+  const urls = paths.map(pathname => `  <url><loc>${escapeXml(absolutePublicUrl(req, pathname))}</loc></url>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+}
+
+function robotsTxt(req){
+  return [
+    "User-agent: *",
+    "Allow: /",
+    `Sitemap: ${absolutePublicUrl(req, "/sitemap.xml")}`,
+    ""
+  ].join("\n");
+}
+
 function enforceHttpsInProduction(req, res, next){
   if(process.env.NODE_ENV !== "production") return next();
 
@@ -115,7 +156,15 @@ import fs from "fs";
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
-// --- static (branding + landing)
+// --- search discovery + static (branding + landing)
+app.get("/robots.txt", (req,res)=>{
+  res.type("text/plain").send(robotsTxt(req));
+});
+
+app.get("/sitemap.xml", (req,res)=>{
+  res.type("application/xml").send(sitemapXml(req));
+});
+
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 app.use("/templates", express.static(path.join(__dirname, "..", "templates")));
 app.get("/console", (req,res)=>{
@@ -154,6 +203,12 @@ app.get("/map/database", (req,res,next)=>{
   try{
     const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
     res.json({ map_database: mapDatabaseStatus({ db, anchorId }) });
+  }catch(e){ next(e); }
+});
+
+app.get("/map/dyson-sphere-ring-1", (req,res,next)=>{
+  try{
+    res.json({ map_database: mapDatabaseStatus({ db, anchorId: "dyson-sphere-ring-1" }) });
   }catch(e){ next(e); }
 });
 
