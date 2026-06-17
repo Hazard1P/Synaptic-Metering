@@ -18,6 +18,8 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
+import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
+import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -158,6 +160,31 @@ app.get("/me", requireAccount, (req,res)=>{
     ORDER BY provider_name
   `).all(req.authAccount.id);
   res.json({ account: req.authAccount, identities });
+});
+
+app.get("/map/authenticate/:mapId", (req,res,next)=>{
+  try{
+    const hasApiKey = Boolean(req.header("x-api-key"));
+    const hasAccount = Boolean(req.authAccount);
+
+    const sendAuthentication = () => {
+      const result = authenticateStoredMapAsset(db, req.params.mapId, {
+        includePrivateMetadata: Boolean(req.apiKeyAuthenticated || req.authAccount)
+      });
+      if(!result) return res.status(404).json({ error: "map_asset_not_found" });
+      return res.json(result);
+    };
+
+    if(hasAccount) return sendAuthentication();
+    if(hasApiKey){
+      return requireApiKeyOrAccount(req, res, (err) => {
+        if(err) return next(err);
+        return sendAuthentication();
+      });
+    }
+
+    return sendAuthentication();
+  }catch(e){ next(e); }
 });
 
 const ACCOUNT_ROLES = new Set(["user", "admin"]);
