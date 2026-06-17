@@ -299,7 +299,7 @@ app.post("/catalog/refresh", (req,res,next)=>{
 app.get("/intelligence/state", (req,res,next)=>{
   try{
     requireScope(req, "intelligence:read");
-    const requestedAnchorId = req.query?.anchor_id || "major-ursa";
+    const requestedAnchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
     const invoiceKey = req.query?.invoice_key || req.query?.a1 || null;
     const masterKey = req.query?.master_key || null;
     const providedKeys = [invoiceKey, masterKey].filter(Boolean);
@@ -352,7 +352,7 @@ app.post("/sessions", (req,res,next)=>{
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
     `).run(id, accountId, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ db, anchorId: "major-ursa" }) });
+    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1" }) });
   }catch(e){ next(e); }
 });
 
@@ -397,7 +397,7 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
       VALUES (?, ?, ?, ?)
     `).run(evId, sessionId, sess.current_item_id, body.seconds);
 
-    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "major-ursa" }) });
+    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" }) });
   }catch(e){ next(e); }
 });
 
@@ -469,7 +469,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       unit_price_cents: l.unit_price.cents,
       line_total_cents: l.cost.cents
     })),
-    intelligence: intelligenceTickContext({ db, anchorId: "major-ursa", invoiceKey: `A1:${session_id}` }),
+    intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1", invoiceKey: `A1:${session_id}` }),
     network: {
       a1_box_key: `A1:${session_id}`,
       operation: "Seconds_Of_Intelligence",
@@ -497,7 +497,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     keyLabel: `A1:${session_id}`,
     accountId: req.authAccount.id,
     invoiceId: id,
-    anchorAssetId: "major-ursa",
+    anchorAssetId: "dyson-sphere-ring-1",
     status: "confirmed"
   });
 

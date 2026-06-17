@@ -38,7 +38,7 @@ export function createIntelligenceNetworkKey(db, {
   keyLabel,
   accountId = null,
   invoiceId = null,
-  anchorAssetId = "major-ursa",
+  anchorAssetId = "dyson-sphere-ring-1",
   status = "confirmed"
 }){
   const row = {
@@ -47,7 +47,7 @@ export function createIntelligenceNetworkKey(db, {
     key_label: normalizeKeyLabel(keyLabel),
     account_id: accountId,
     invoice_id: invoiceId,
-    anchor_asset_id: anchorAssetId || "major-ursa",
+    anchor_asset_id: anchorAssetId || "dyson-sphere-ring-1",
     status: normalizeStatus(status)
   };
 
@@ -74,7 +74,7 @@ export function upsertIntelligenceNetworkKey(db, {
   keyLabel,
   accountId = null,
   invoiceId = null,
-  anchorAssetId = "major-ursa",
+  anchorAssetId = "dyson-sphere-ring-1",
   status = "confirmed"
 }){
   const key_kind = normalizeKeyKind(keyKind);
@@ -98,7 +98,7 @@ export function upsertIntelligenceNetworkKey(db, {
     invoiceId,
     key_kind,
     key_label,
-    anchorAssetId || "major-ursa",
+    anchorAssetId || "dyson-sphere-ring-1",
     normalizedStatus
   );
 
