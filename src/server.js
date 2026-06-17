@@ -17,7 +17,7 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
+import { intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -145,6 +145,13 @@ app.get("/intelligence/anchors", (req,res)=>{
   });
 });
 
+app.get("/map/database", (req,res,next)=>{
+  try{
+    const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
+    res.json({ map_database: mapDatabaseStatus({ db, anchorId }) });
+  }catch(e){ next(e); }
+});
+
 // --- Google OAuth + account sessions
 app.use(loadAuthenticatedAccount(db));
 app.get("/auth/google/start", startGoogleOAuth);
@@ -263,6 +270,7 @@ app.post("/catalog/refresh", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+
 app.get("/intelligence/state", (req,res,next)=>{
   try{
     requireScope(req, "intelligence:read");
@@ -285,7 +293,8 @@ app.get("/intelligence/state", (req,res,next)=>{
     res.json({
       context: intelligenceTickContext({ db, anchorId, invoiceKey, masterKey }),
       confirmed_status: masterKey ? "network_confirmed" : (invoiceKey ? "invoice_key_confirmed" : "anchor_confirmed"),
-      moderation: "business_regulated_light_intelligence"
+      moderation: "business_regulated_light_intelligence",
+      map_database: mapDatabaseStatus({ db, anchorId })
     });
   }catch(e){ next(e); }
 });
