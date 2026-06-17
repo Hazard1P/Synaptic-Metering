@@ -200,6 +200,22 @@ BUSINESS_GOOGLE_EMAILS=<business-contact@example.com>
 
 Replace `<metering-origin>` with the exact scheme and host that serves the app, for example `https://metering.SynapticSystems.ca`. If the app is mounted under a path, keep the origin in `CORS_ORIGINS` and include the mounted path in `PUBLIC_BASE_URL` and any reverse-proxy routing.
 
+### Search indexing and discovery
+
+The app exposes search-engine discovery files at the deployment root:
+
+- `GET /robots.txt` allows crawling and points crawlers at the sitemap.
+- `GET /sitemap.xml` lists the public deployment URLs for `/`, `/console`, `/genesis`, `/map/dyson-sphere-ring-1`, and `/public/dyson-sphere-ring-1-map.svg`.
+
+Set `PUBLIC_BASE_URL` to the exact public `https://` base URL before deployment so generated discovery URLs match the crawlable site. If `PUBLIC_BASE_URL` is not set, the server derives the base URL from the incoming request host and protocol, which is useful for local checks but should not be relied on behind production proxies unless `TRUST_PROXY=true` and forwarded headers are correct. Keep `/console` in the sitemap only while the console is intended to be a public entry point; remove it from `src/server.js` if the console becomes private.
+
+Example verification after deployment:
+
+```bash
+curl https://<metering-origin>/robots.txt
+curl https://<metering-origin>/sitemap.xml
+```
+
 ### SynapticSystems.ca navigation setup
 
 - Add a normal HTTPS link on SynapticSystems.ca to the deployed metering app URL, for example a navigation item or button pointing to `PUBLIC_BASE_URL`.

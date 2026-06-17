@@ -85,6 +85,47 @@ function trustProxyValue(){
 
 const trustProxySetting = trustProxyValue();
 
+function publicBaseUrl(req){
+  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
+  const base = configured || `${req.protocol}://${req.get("host")}`;
+  return base.replace(/\/+$/, "");
+}
+
+function absolutePublicUrl(req, pathname){
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return `${publicBaseUrl(req)}${normalizedPath}`;
+}
+
+function escapeXml(value){
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function sitemapXml(req){
+  const paths = [
+    "/",
+    "/console",
+    "/genesis",
+    "/map/dyson-sphere-ring-1",
+    "/public/dyson-sphere-ring-1-map.svg"
+  ];
+  const urls = paths.map(pathname => `  <url><loc>${escapeXml(absolutePublicUrl(req, pathname))}</loc></url>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+}
+
+function robotsTxt(req){
+  return [
+    "User-agent: *",
+    "Allow: /",
+    `Sitemap: ${absolutePublicUrl(req, "/sitemap.xml")}`,
+    ""
+  ].join("\n");
+}
+
 function enforceHttpsInProduction(req, res, next){
   if(process.env.NODE_ENV !== "production") return next();
 
@@ -115,67 +156,15 @@ import fs from "fs";
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
-function publicBaseUrl(req){
-  const configuredBaseUrl = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
-  if(configuredBaseUrl) return configuredBaseUrl;
-  return `${req.protocol}://${req.get("host")}`;
-}
+// --- search discovery + static (branding + landing)
+app.get("/robots.txt", (req,res)=>{
+  res.type("text/plain").send(robotsTxt(req));
+});
 
-function escapeHtml(value){
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+app.get("/sitemap.xml", (req,res)=>{
+  res.type("application/xml").send(sitemapXml(req));
+});
 
-function renderDysonSphereRingMapPage(req){
-  const anchorId = "dyson-sphere-ring-1";
-  const status = mapDatabaseStatus({ anchorId });
-  const metadata = MAP_DATABASE_METADATA[anchorId];
-  const canonicalUrl = `${publicBaseUrl(req)}/map/${anchorId}`;
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dyson-Sphere Ring-1 Map Database | Synaptics.Systems</title>
-  <meta name="description" content="Searchable Synaptics.Systems map database anchor for 1 Hz Seconds Of Intelligence metering.">
-  <link rel="canonical" href="${escapeHtml(canonicalUrl)}">
-</head>
-<body>
-  <main>
-    <h1>Dyson-Sphere Ring-1 Map Database</h1>
-    <p>Human-readable public anchor for the Synaptics.Systems 1 Hz Seconds Of Intelligence map database.</p>
-    <dl>
-      <dt>Anchor ID</dt>
-      <dd><code>${escapeHtml(anchorId)}</code></dd>
-      <dt>Status</dt>
-      <dd><code>${escapeHtml(status.authentication_status)}</code></dd>
-      <dt>Map database status identifier</dt>
-      <dd><code>mapDatabaseStatus</code></dd>
-      <dt>Metadata registry</dt>
-      <dd><code>MAP_DATABASE_METADATA</code></dd>
-      <dt>Business association</dt>
-      <dd>${escapeHtml(metadata.business_association)}</dd>
-      <dt>Owner / executive director</dt>
-      <dd>${escapeHtml(metadata.owner_executive_director)}</dd>
-    </dl>
-    <nav aria-label="Dyson-Sphere Ring-1 map links">
-      <ul>
-        <li><a href="/map/database?anchor_id=${escapeHtml(anchorId)}">Searchable map database JSON</a></li>
-        <li><a href="/map/authenticate/${escapeHtml(anchorId)}">Authenticate map asset</a></li>
-        <li><a href="${escapeHtml(metadata.physical_map_image_url)}">Physical map SVG</a></li>
-      </ul>
-    </nav>
-  </main>
-</body>
-</html>`;
-}
-
-// --- static (branding + landing)
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 app.use("/templates", express.static(path.join(__dirname, "..", "templates")));
 app.get("/console", (req,res)=>{
@@ -221,6 +210,12 @@ app.get("/map/database", (req,res,next)=>{
   try{
     const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
     res.json({ map_database: mapDatabaseStatus({ db, anchorId }) });
+  }catch(e){ next(e); }
+});
+
+app.get("/map/dyson-sphere-ring-1", (req,res,next)=>{
+  try{
+    res.json({ map_database: mapDatabaseStatus({ db, anchorId: "dyson-sphere-ring-1" }) });
   }catch(e){ next(e); }
 });
 
