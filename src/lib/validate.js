@@ -11,14 +11,14 @@ export const StartBody = z.object({
 
 export const HeartbeatBody = z.object({
   seconds: z.number().int().min(1).max(10).default(1),
-  anchor_id: z.string().min(1).max(120).default("major-ursa")
+  anchor_id: z.string().min(1).max(120).default("dyson-sphere-ring-1")
 });
 
 
 export const MasterKeyBody = z.object({
   key_label: z.string().min(1).max(240),
   account_id: z.string().min(1).max(120).nullable().optional(),
-  anchor_asset_id: z.enum(["major-ursa", "cassiopeia", "isolated-blackholes"]).default("major-ursa"),
+  anchor_asset_id: z.enum(["dyson-sphere-ring-1", "major-ursa", "cassiopeia", "isolated-blackholes"]).default("dyson-sphere-ring-1"),
   status: z.enum(["pending", "confirmed", "revoked"]).default("confirmed")
 }).strict();
 
