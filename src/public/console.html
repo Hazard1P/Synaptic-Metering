@@ -216,6 +216,19 @@
       <div class="status" id="meterStatus"></div>
     </div>
 
+
+    <div class="card">
+      <h2>Admin Project Search</h2>
+      <div class="row">
+        <label>Search term</label>
+        <input id="projectSearchQuery" placeholder="2+ characters"/>
+        <button class="primary" id="btnProjectSearch" type="button">Search project</button>
+        <span class="status" id="projectSearchStatus">Admin-only source/documentation search.</span>
+      </div>
+      <div style="height:10px"></div>
+      <pre id="projectSearchOut">Sign in as an admin, then search repository-owned source and documentation files.</pre>
+    </div>
+
     <div class="card">
       <h2>NDSP Genesis Monitor</h2>
       <div class="row">
@@ -317,6 +330,19 @@
   }
 
   function status(id, msg){ $(id).textContent = msg || ""; }
+
+  function renderProjectSearch(data){
+    const lines = (data.results || []).map(result => `${result.path}:${result.line}  ${result.excerpt}`);
+    const header = `${data.count || 0} result(s) for "${data.query || ""}"${data.truncated ? " (truncated)" : ""}`;
+    $("projectSearchOut").textContent = [header, ...lines].join("\n\n") || header;
+  }
+
+  async function runProjectSearch(){
+    const q = $("projectSearchQuery").value.trim();
+    const data = await api("/admin/project-search?q=" + encodeURIComponent(q), { method:"GET" });
+    renderProjectSearch(data);
+    status("projectSearchStatus", `Scanned ${data.stats?.files_scanned ?? 0} file(s).`);
+  }
 
   function setMapDatabaseStatus(state){
     const map = state?.map_database || state || {};
@@ -474,6 +500,11 @@
       URL.revokeObjectURL(url);
       status("meterStatus","Invoice JSON generated.");
     }catch(e){ status("meterStatus","Error: "+e.message); }
+  });
+
+  $("btnProjectSearch").addEventListener("click", ()=> runProjectSearch().catch(e=>status("projectSearchStatus","Error: "+e.message)));
+  $("projectSearchQuery").addEventListener("keydown", (e)=>{
+    if(e.key === "Enter") runProjectSearch().catch(err=>status("projectSearchStatus","Error: "+err.message));
   });
 
   $("btnNdspPull").addEventListener("click", async ()=>{

@@ -114,12 +114,6 @@ function trustProxyValue(){
 
 const trustProxySetting = trustProxyValue();
 
-function publicBaseUrl(req){
-  const configured = (process.env.PUBLIC_BASE_URL || "").trim();
-  const base = configured || `${req.protocol}://${req.get("host")}`;
-  return base.replace(/\/+$/, "");
-}
-
 function absolutePublicUrl(req, pathname){
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
   return `${publicBaseUrl(req)}${normalizedPath}`;
@@ -184,6 +178,114 @@ import path from "path";
 import fs from "fs";
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
+
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+const PROJECT_SEARCH_MIN_QUERY_LENGTH = 2;
+const PROJECT_SEARCH_MAX_RESULTS = 50;
+const PROJECT_SEARCH_MAX_FILE_SIZE_BYTES = 512 * 1024;
+const PROJECT_SEARCH_MAX_EXCERPT_LENGTH = 180;
+const PROJECT_SEARCH_ALLOWED_EXTENSIONS = new Set([
+  ".css", ".html", ".js", ".json", ".md", ".mjs", ".svg", ".txt", ".xml", ".yml", ".yaml"
+]);
+const PROJECT_SEARCH_EXCLUDED_DIRS = new Set([
+  ".git", ".cache", ".next", ".npm", "coverage", "dist", "build", "node_modules", "tmp", "temp", "logs"
+]);
+const PROJECT_SEARCH_EXCLUDED_FILE_NAMES = new Set([
+  ".env", ".env.local", ".env.production", ".env.development", ".env.test", "package-lock.json"
+]);
+const PROJECT_SEARCH_EXCLUDED_EXTENSIONS = new Set([
+  ".db", ".sqlite", ".sqlite3", ".log", ".pem", ".key", ".crt", ".p12", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz"
+]);
+
+function normalizeProjectSearchQuery(value){
+  return String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ");
+}
+
+function projectSearchError(status, code, details = {}){
+  const err = new Error(code);
+  err.status = status;
+  err.issues = details;
+  return err;
+}
+
+function isExcludedProjectEntry(absPath, dirent){
+  const name = dirent.name;
+  if(name.startsWith(".env")) return true;
+  if(dirent.isDirectory()) return PROJECT_SEARCH_EXCLUDED_DIRS.has(name);
+  if(!dirent.isFile()) return true;
+  if(PROJECT_SEARCH_EXCLUDED_FILE_NAMES.has(name)) return true;
+  const ext = path.extname(name).toLowerCase();
+  if(PROJECT_SEARCH_EXCLUDED_EXTENSIONS.has(ext)) return true;
+  if(!PROJECT_SEARCH_ALLOWED_EXTENSIONS.has(ext)) return true;
+
+  const relativePath = path.relative(PROJECT_ROOT, absPath);
+  if(relativePath.startsWith("..") || path.isAbsolute(relativePath)) return true;
+  return relativePath.split(path.sep).some(part => PROJECT_SEARCH_EXCLUDED_DIRS.has(part));
+}
+
+function searchProjectFiles(query){
+  const normalizedQuery = normalizeProjectSearchQuery(query);
+  if(normalizedQuery.length < PROJECT_SEARCH_MIN_QUERY_LENGTH){
+    throw projectSearchError(400, "query_too_short", { min_query_length: PROJECT_SEARCH_MIN_QUERY_LENGTH });
+  }
+
+  const needle = normalizedQuery.toLowerCase();
+  const results = [];
+  let filesScanned = 0;
+  let filesSkippedTooLarge = 0;
+
+  function walk(dir){
+    if(results.length >= PROJECT_SEARCH_MAX_RESULTS) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for(const entry of entries){
+      if(results.length >= PROJECT_SEARCH_MAX_RESULTS) break;
+      const absPath = path.join(dir, entry.name);
+      if(isExcludedProjectEntry(absPath, entry)) continue;
+      if(entry.isDirectory()){
+        walk(absPath);
+        continue;
+      }
+
+      const stat = fs.statSync(absPath);
+      if(stat.size > PROJECT_SEARCH_MAX_FILE_SIZE_BYTES){
+        filesSkippedTooLarge += 1;
+        continue;
+      }
+
+      filesScanned += 1;
+      const text = fs.readFileSync(absPath, "utf8");
+      const lines = text.split(/\r?\n/);
+      for(let index = 0; index < lines.length && results.length < PROJECT_SEARCH_MAX_RESULTS; index += 1){
+        const lineText = lines[index];
+        const matchIndex = lineText.toLowerCase().indexOf(needle);
+        if(matchIndex === -1) continue;
+        const contextLength = Math.max(20, Math.floor((PROJECT_SEARCH_MAX_EXCERPT_LENGTH - normalizedQuery.length) / 2));
+        const excerptStart = Math.max(0, matchIndex - contextLength);
+        const excerptEnd = Math.min(lineText.length, matchIndex + normalizedQuery.length + contextLength);
+        const excerpt = `${excerptStart > 0 ? "…" : ""}${lineText.slice(excerptStart, excerptEnd).trim()}${excerptEnd < lineText.length ? "…" : ""}`;
+        results.push({
+          path: path.relative(PROJECT_ROOT, absPath).split(path.sep).join("/"),
+          line: index + 1,
+          excerpt
+        });
+      }
+    }
+  }
+
+  walk(PROJECT_ROOT);
+  return {
+    query: normalizedQuery,
+    results,
+    count: results.length,
+    truncated: results.length >= PROJECT_SEARCH_MAX_RESULTS,
+    limits: {
+      min_query_length: PROJECT_SEARCH_MIN_QUERY_LENGTH,
+      max_results: PROJECT_SEARCH_MAX_RESULTS,
+      max_file_size_bytes: PROJECT_SEARCH_MAX_FILE_SIZE_BYTES
+    },
+    stats: { files_scanned: filesScanned, files_skipped_too_large: filesSkippedTooLarge }
+  };
+}
 
 // --- search discovery + static (branding + landing)
 app.get("/robots.txt", (req,res)=>{
@@ -306,6 +408,15 @@ app.get("/map/authenticate/:mapId", (req,res,next)=>{
 });
 
 const ACCOUNT_ROLES = new Set(["user", "admin"]);
+
+
+app.get("/admin/project-search", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireScope(req, "project:read");
+    requireAdmin(req);
+    res.json(searchProjectFiles(req.query?.q));
+  }catch(e){ next(e); }
+});
 
 app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
   try{

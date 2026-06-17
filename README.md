@@ -74,6 +74,7 @@ All `/admin/*` routes require an admin account session or a trusted API key. Acc
 - `GET /admin/accounts/:id/identities` — view the OAuth identities linked to one account for support/admin workflows. The response includes identity metadata such as provider, provider subject, email, verification status, and timestamps, but excludes OAuth access and refresh token data.
 - `GET /admin/account-identities` — view linked OAuth identity metadata across all accounts for support/admin workflows, also excluding OAuth access and refresh token data.
 - `GET /admin/reports/quarterly?year=YYYY&quarter=1-4` — generate a private quarterly admin report. Requires an admin account session or trusted API key plus the `reports:read` scope when scopes are enforced. The report aggregates `usage_events`, `sessions`, `catalog_items`, and `invoices` for the requested UTC quarter and returns metered seconds, invoice quantity, subtotal/total cents, sessions by account, invoice counts by status, and map/intelligence anchor IDs or network keys present in invoice payloads. Do not expose this response through public routes because it can include account and internal business metadata.
+- `GET /admin/project-search?q=<term>` — search repository-owned source and documentation files from the operator console or API. Requires an admin account session or trusted API key plus the `project:read` scope when scopes are enforced. Queries are Unicode-normalized, trimmed, whitespace-collapsed, matched literally/case-insensitively, and must be at least 2 characters. Responses include `query`, `count`, `truncated`, `limits`, `stats`, and `results[]` objects with `path`, `line`, and a short matched `excerpt`. Results are capped at 50 matches and files over 512 KiB are skipped. The searcher excludes dependency/generated/private locations and file types, including `node_modules`, `.git`, `.cache`, `coverage`, `dist`, `build`, `tmp`, `logs`, SQLite/database files, logs, archives, binary images/PDFs, keys/certificates, lockfiles, and secret environment files such as `.env*`.
 
 Example quarterly report:
 
@@ -81,6 +82,16 @@ Example quarterly report:
 curl -H "x-api-key: $API_KEY" \
   "http://localhost:8080/admin/reports/quarterly?year=2026&quarter=2"
 ```
+
+
+Example project search:
+
+```bash
+curl -H "x-api-key: $API_KEY" \
+  "http://localhost:8080/admin/project-search?q=catalog"
+```
+
+Browser operators can also open `/console`, sign in with an admin Google account, and use the **Admin Project Search** panel. Non-admin account sessions receive `admin_required`; unauthenticated or invalid API-key requests are rejected by the same `/admin/*` authentication pattern as the other admin endpoints.
 
 Example role update:
 
