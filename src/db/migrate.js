@@ -104,6 +104,9 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_account_id
 CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_invoice_id
   ON intelligence_network_keys(invoice_id);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_intelligence_network_keys_kind_label
+  ON intelligence_network_keys(key_kind, key_label);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT,
