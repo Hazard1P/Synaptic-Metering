@@ -327,3 +327,12 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 - Deploy behind a trusted reverse proxy that terminates TLS, forwards `X-Forwarded-Proto`, and restricts administrative access.
 - Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through a secret manager or deployment environment.
 - Use encrypted persistent volumes and encrypted backups for `DATABASE_PATH`.
+
+## User-provided Dyson sphere map asset
+
+The physical map image provided in the admin metering request is represented in Git as a text-based SVG transcription instead of a binary raster upload:
+
+- `public/maps/dyson-sphere-request-asset.svg` — Git-safe visual transcription of the provided Dyson sphere/star-map asset.
+- `public/maps/dyson-sphere-request-asset.metadata.json` — private admin/business association metadata for the asset, including the one-second metering interval.
+
+Use this SVG path anywhere a browser-readable static map asset is required without relying on unsupported binary pushes.
