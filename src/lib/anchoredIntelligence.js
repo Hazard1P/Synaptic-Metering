@@ -1,6 +1,28 @@
+import { loadMapDatabaseByAnchorId } from "./mapDatabase.js";
+
 const FIVE_DAY_EPOCH_SECONDS = 5 * 24 * 60 * 60;
 
 export const ANCHORED_ASSET_MAP = Object.freeze({
+  "dyson-sphere-ring-1": {
+    id: "dyson-sphere-ring-1",
+    label: "Dyson-Sphere 3_ring_Dyson-Sphere Ring-1 anchor",
+    asset_type: "Dyson-Sphere",
+    permanence: "permanent_anchor",
+    role: "Business-Association",
+    physics_role: "Home-Room/LightBulb-2-Map_Database/Star_Anchor",
+    tick_rate_hz: 1,
+    vector: "techneqly_central_synaptic_intelligence_systems_ring_1",
+    metadata: Object.freeze({
+      structure_label: "Dyson-Sphere",
+      ring_system_label: "3_ring_Dyson-Sphere",
+      ring_label: "Ring-1",
+      organization: "techneqly",
+      association_type: "Business-Association",
+      system_label: "Central_Synaptic_Intelligence_Systems",
+      owner_executive_director: "Owner/Executive-Director: Michael_Rybaltowicz",
+      anchor_path: "Home-Room/LightBulb-2-Map_Database/Star_Anchor"
+    })
+  },
   "major-ursa": {
     id: "major-ursa",
     label: "Major Ursa anchored star/database",
@@ -30,10 +52,20 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     physics_role: "considered_in_data_and_physics_not_pulled_through",
     tick_rate_hz: 1,
     vector: "non_extractive_gravity_reference"
+  },
+  "dyson-sphere-ring-1": {
+    id: "dyson-sphere-ring-1",
+    label: "Dyson-Sphere Ring-1 map database",
+    asset_type: "physical_map_database",
+    permanence: "permanent_anchor",
+    role: "operator_map_database",
+    physics_role: "map_database_reference_anchor",
+    tick_rate_hz: 1,
+    vector: "ring_1_physical_map_reference"
   }
 });
 
-const DEFAULT_ANCHOR_ID = "major-ursa";
+const DEFAULT_ANCHOR_ID = "dyson-sphere-ring-1";
 const ANCHORED_ASSET_COLUMNS = `
   id, label, asset_type, permanence, role, physics_role, tick_rate_hz, vector
 `;
@@ -66,12 +98,19 @@ export function listAnchoredAssets(db){
   return rows.length ? rows : Object.values(ANCHORED_ASSET_MAP);
 }
 
+function attachMapDatabase(db, asset){
+  if(!db || !asset) return asset;
+  const map_database = loadMapDatabaseByAnchorId(db, asset.id);
+  return map_database ? { ...asset, map_database } : asset;
+}
+
 export function resolveAnchoredAsset(db, anchorId = DEFAULT_ANCHOR_ID){
   if(!db) return fallbackAnchor(anchorId);
 
-  return loadAnchoredAsset(db, anchorId)
+  const asset = loadAnchoredAsset(db, anchorId)
     || loadAnchoredAsset(db, DEFAULT_ANCHOR_ID)
     || fallbackAnchor(anchorId);
+  return attachMapDatabase(db, asset);
 }
 
 export function unixSeconds(date = new Date()){
@@ -111,5 +150,30 @@ export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchored
     master_key: masterKey,
     network_governance: masterKey ? "genesis_core_network" : "invoice_bound",
     extraction_policy: "anchor_reference_only_not_pulled_through"
+  };
+}
+
+
+export const MAP_DATABASE_METADATA = Object.freeze({
+  "dyson-sphere-ring-1": {
+    business_association: "Synaptics.Systems deployment operations",
+    owner_executive_director: "Synaptics.Systems Executive Director",
+    physical_map_image_url: "/public/dyson-sphere-ring-1-map.svg"
+  }
+});
+
+export function mapDatabaseStatus({ db = null, anchorId = "dyson-sphere-ring-1", now = new Date() } = {}){
+  const asset = resolveAnchoredAsset(db, anchorId);
+  const metadata = MAP_DATABASE_METADATA[asset.id] || MAP_DATABASE_METADATA["dyson-sphere-ring-1"];
+  const isRequestedAnchorActive = asset.id === normalizeRawAnchorId(anchorId);
+
+  return {
+    active_anchor_id: asset.id,
+    map_label: asset.label,
+    business_association: metadata.business_association,
+    owner_executive_director: metadata.owner_executive_director,
+    authentication_status: isRequestedAnchorActive ? "authenticated_active" : "fallback_anchor_active",
+    physical_map_image_url: metadata.physical_map_image_url,
+    checked_at: now.toISOString()
   };
 }

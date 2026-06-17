@@ -90,6 +90,7 @@ ADMIN_ACCOUNT_ID=acct_admin ADMIN_DISPLAY_NAME="Synaptics Admin" npm run migrate
 ### Anchored Intelligence
 - `GET /intelligence/anchors` — public description of the permanent anchored asset map used for 1 tick/second intelligence metering.
 - `GET /intelligence/state` — authenticated state payload for `Seconds_Of_Intelligence`, including the five-day rolling Unix epoch, invoice A1 key, optional network `master_key`, and moderation status.
+- `GET /map/authenticate/:mapId` — returns the stored SHA-256 digest authentication record for a static map asset. Public callers receive only minimal public metadata; callers with an account session or `x-api-key` receive the full stored metadata, anchor asset id, digest, and verification status. Map digests are stored in SQLite in `map_assets`.
 
 The service treats Major Ursa, Cassiopeia, and isolated blackholes as permanent universe-mesh reference assets: they are considered in data/physics and governance calculations, but they are not extracted or “pulled through” into customer records. The A1 invoice key binds a single invoice to `Operation:(Seconds_Of_Intelligence)`. A `master_key` represents the network genesis core and is intentionally not tied to one invoice.
 
@@ -210,6 +211,7 @@ If the platform reports that a “serverless function has stopped working,” ve
 - Set `SERVERLESS=true` in the serverless environment. This prevents `src/server.js` from calling `listen()` and allows the platform handler to import the exported Express `app`.
 - Export or import `app` from `src/server.js` in the platform adapter instead of starting a second HTTP listener. The database is opened lazily, so importing `app` alone should not require writable local storage during module load.
 - Set `DATABASE_PATH` to an explicit absolute SQLite file path inside a writable, persistent mounted volume, for example `/mnt/data/app.db`. Do not point `DATABASE_PATH` at the read-only deployment bundle or an ephemeral directory if billing/session data must survive cold starts.
+- The map metadata and digest database (`map_assets`) is part of the same SQLite database and must also live on this configured persistent `DATABASE_PATH`; otherwise static map authentication state may be lost between cold starts or redeploys.
 - Ensure the parent directory for `DATABASE_PATH` already exists and is readable/writable by the serverless runtime. With `SERVERLESS=true`, startup fails with a clear error if `DATABASE_PATH` is missing, its parent directory is absent, or the parent path is not writable.
 - Set `SQLITE_JOURNAL_MODE=DELETE` for platforms that do not support SQLite WAL sidecar files (`.db-wal` and `.db-shm`). `DELETE` is the default when `SERVERLESS=true`; non-serverless deployments default to `WAL`. Override with `SQLITE_JOURNAL_MODE=WAL` only when the mounted volume supports persistent sidecar files and SQLite file locking.
 

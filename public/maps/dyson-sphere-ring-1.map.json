@@ -1,0 +1,6 @@
+{
+  "map_id": "dyson-sphere-ring-1",
+  "title": "Dyson Sphere Ring 1",
+  "anchor_asset_id": "dyson-sphere-ring-1",
+  "systems": ["dyson-ring-primary", "dyson-ring-north-relay", "dyson-ring-south-relay"]
+}
