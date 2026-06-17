@@ -17,7 +17,7 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus, MAP_DATABASE_METADATA } from "./lib/anchoredIntelligence.js";
+import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
@@ -44,6 +44,35 @@ const db = new Proxy({}, {
     return typeof value === "function" ? value.bind(activeDb) : value;
   }
 });
+
+
+function publicBaseUrl(req){
+  const configured = String(process.env.PUBLIC_BASE_URL || "").trim();
+  const fallback = `${req.protocol}://${req.get("host")}`;
+  const rawBase = configured || fallback;
+
+  try{
+    return new URL(rawBase).toString().replace(/\/$/, "");
+  }catch{
+    return fallback.replace(/\/$/, "");
+  }
+}
+
+function canonicalPublicUrls(req, anchorId){
+  const baseUrl = publicBaseUrl(req);
+  const mapDatabasePath = `/map/database?anchor_id=${encodeURIComponent(anchorId)}`;
+  const mapAuthenticationPath = `/map/authenticate/${encodeURIComponent(anchorId)}`;
+  const mapServerPath = "/map/server";
+  const physicalMapImagePath = MAP_DATABASE_METADATA[anchorId]?.physical_map_image_url
+    || MAP_DATABASE_METADATA["dyson-sphere-ring-1"].physical_map_image_url;
+
+  return {
+    map_server: new URL(mapServerPath, `${baseUrl}/`).toString(),
+    map_database: new URL(mapDatabasePath, `${baseUrl}/`).toString(),
+    map_authentication: new URL(mapAuthenticationPath, `${baseUrl}/`).toString(),
+    physical_map_image: new URL(physicalMapImagePath, `${baseUrl}/`).toString()
+  };
+}
 
 function parseCsvEnv(value){
   return (value || "")
@@ -200,9 +229,26 @@ app.get("/intelligence/anchors", (req,res)=>{
 });
 
 
-app.get("/map/dyson-sphere-ring-1", (req,res,next)=>{
+app.get("/map/server", (req,res,next)=>{
   try{
-    res.type("html").send(renderDysonSphereRingMapPage(req));
+    const anchorId = "dyson-sphere-ring-1";
+    const map_database = mapDatabaseStatus({ db, anchorId });
+    const authentication = authenticateStoredMapAsset(db, anchorId, {
+      includePrivateMetadata: false
+    });
+    if(!authentication) return res.status(404).json({ error: "map_asset_not_found" });
+
+    res.json({
+      server_role: "map_database_reference_anchor",
+      operation: "Seconds_Of_Intelligence",
+      tick_rate_hz: 1,
+      anchor_id: anchorId,
+      canonical_public_urls: canonicalPublicUrls(req, anchorId),
+      digest: authentication.digest,
+      verification_status: authentication.verification_status,
+      map_database,
+      authentication
+    });
   }catch(e){ next(e); }
 });
 
