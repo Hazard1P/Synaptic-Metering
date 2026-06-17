@@ -1,3 +1,5 @@
+import { loadMapDatabaseByAnchorId } from "./mapDatabase.js";
+
 const FIVE_DAY_EPOCH_SECONDS = 5 * 24 * 60 * 60;
 
 export const ANCHORED_ASSET_MAP = Object.freeze({
@@ -76,12 +78,19 @@ export function listAnchoredAssets(db){
   return rows.length ? rows : Object.values(ANCHORED_ASSET_MAP);
 }
 
+function attachMapDatabase(db, asset){
+  if(!db || !asset) return asset;
+  const map_database = loadMapDatabaseByAnchorId(db, asset.id);
+  return map_database ? { ...asset, map_database } : asset;
+}
+
 export function resolveAnchoredAsset(db, anchorId = DEFAULT_ANCHOR_ID){
   if(!db) return fallbackAnchor(anchorId);
 
-  return loadAnchoredAsset(db, anchorId)
+  const asset = loadAnchoredAsset(db, anchorId)
     || loadAnchoredAsset(db, DEFAULT_ANCHOR_ID)
     || fallbackAnchor(anchorId);
+  return attachMapDatabase(db, asset);
 }
 
 export function unixSeconds(date = new Date()){

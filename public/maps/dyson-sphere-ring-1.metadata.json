@@ -1,0 +1,7 @@
+{
+  "schema": "synaptics.map.v1",
+  "map_id": "dyson-sphere-ring-1",
+  "canonical": true,
+  "purpose": "Map-backed database anchor for Dyson-Sphere intelligence metering.",
+  "authentication": "server-seeded-canonical-asset"
+}
