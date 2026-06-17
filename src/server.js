@@ -18,6 +18,10 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
+import {
+  lookupIntelligenceNetworkKey,
+  upsertIntelligenceNetworkKey
+} from "./lib/intelligenceNetworkKeys.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
