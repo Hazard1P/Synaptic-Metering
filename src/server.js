@@ -160,6 +160,8 @@ app.get("/me", requireAccount, (req,res)=>{
   res.json({ account: req.authAccount, identities });
 });
 
+const ACCOUNT_ROLES = new Set(["user", "admin"]);
+
 app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireAdmin(req);
@@ -169,6 +171,53 @@ app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
       ORDER BY created_at DESC, id DESC
     `).all();
     res.json({ accounts: rows });
+  }catch(e){ next(e); }
+});
+
+app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireAdmin(req);
+    const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
+    if(!ACCOUNT_ROLES.has(role)){
+      return res.status(400).json({ error: "invalid_role", allowed_roles: [...ACCOUNT_ROLES] });
+    }
+
+    const account = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
+    if(!account) return res.status(404).json({ error: "account_not_found" });
+
+    db.prepare("UPDATE accounts SET role=?, updated_at=datetime('now') WHERE id=?").run(role, req.params.id);
+    const updated = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
+    res.json({ account: updated });
+  }catch(e){ next(e); }
+});
+
+app.get("/admin/accounts/:id/identities", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireAdmin(req);
+    const account = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
+    if(!account) return res.status(404).json({ error: "account_not_found" });
+
+    const identities = db.prepare(`
+      SELECT id, account_id, provider_name, provider_subject, email, email_verified, created_at, updated_at
+      FROM account_identities
+      WHERE account_id=?
+      ORDER BY provider_name, created_at DESC, id DESC
+    `).all(req.params.id);
+    res.json({ account, identities });
+  }catch(e){ next(e); }
+});
+
+app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireAdmin(req);
+    const identities = db.prepare(`
+      SELECT i.id, i.account_id, a.display_name, a.role, i.provider_name, i.provider_subject,
+        i.email, i.email_verified, i.created_at, i.updated_at
+      FROM account_identities i
+      JOIN accounts a ON a.id = i.account_id
+      ORDER BY i.updated_at DESC, i.id DESC
+    `).all();
+    res.json({ identities });
   }catch(e){ next(e); }
 });
 
