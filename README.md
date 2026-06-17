@@ -67,7 +67,19 @@ curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
 ### Admin database
-- `GET /admin/accounts` — list internal accounts and roles. Requires an admin account session or a trusted API key.
+All `/admin/*` routes require an admin account session or a trusted API key. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers are treated as trusted administrative/integration clients.
+
+- `GET /admin/accounts` — list internal accounts and roles.
+- `PATCH /admin/accounts/:id/role` — promote or demote an account by setting `role` in the JSON body to one of the existing `accounts.role` values: `user` or `admin`.
+- `GET /admin/accounts/:id/identities` — view the OAuth identities linked to one account for support/admin workflows. The response includes identity metadata such as provider, provider subject, email, verification status, and timestamps, but excludes OAuth access and refresh token data.
+- `GET /admin/account-identities` — view linked OAuth identity metadata across all accounts for support/admin workflows, also excluding OAuth access and refresh token data.
+
+Example role update:
+
+```bash
+curl -X PATCH -H "x-api-key: $API_KEY" -H "content-type: application/json" \
+  -d '{"role":"admin"}' http://localhost:8080/admin/accounts/acct_123/role
+```
 
 Seed or promote a local admin account during migration with:
 
