@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://example.com/</loc></url>
+  <url><loc>https://example.com/console</loc></url>
+  <url><loc>https://example.com/genesis</loc></url>
+  <url><loc>https://example.com/map/dyson-sphere-ring-1</loc></url>
+  <url><loc>https://example.com/public/dyson-sphere-ring-1-map.svg</loc></url>
+</urlset>
