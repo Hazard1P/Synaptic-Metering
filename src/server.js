@@ -18,8 +18,9 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { ANCHORED_ASSET_MAP, intelligenceTickContext } from "./lib/anchoredIntelligence.js";
+import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
-import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBody } from "./lib/validate.js";
+import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
@@ -202,14 +203,52 @@ app.post("/catalog/refresh", (req,res,next)=>{
 app.get("/intelligence/state", (req,res,next)=>{
   try{
     requireScope(req, "intelligence:read");
-    const anchorId = req.query?.anchor_id || "major-ursa";
+    const requestedAnchorId = req.query?.anchor_id || "major-ursa";
     const invoiceKey = req.query?.invoice_key || req.query?.a1 || null;
     const masterKey = req.query?.master_key || null;
+    const providedKeys = [invoiceKey, masterKey].filter(Boolean);
+    if(providedKeys.length > 1) return res.status(400).json({ error: "single_network_key_required" });
+
+    let keyRecord = null;
+    if(invoiceKey){
+      keyRecord = lookupIntelligenceNetworkKey(db, { keyKind: "invoice_key", keyLabel: invoiceKey });
+    }else if(masterKey){
+      keyRecord = lookupIntelligenceNetworkKey(db, { keyKind: "master_key", keyLabel: masterKey });
+    }
+
+    if((invoiceKey || masterKey) && !keyRecord) return res.status(404).json({ error: "network_key_not_found" });
+
+    const anchorId = keyRecord?.anchor_asset_id || requestedAnchorId;
     res.json({
-      context: intelligenceTickContext({ anchorId, invoiceKey, masterKey }),
-      confirmed_status: masterKey ? "network_confirmed" : (invoiceKey ? "invoice_key_confirmed" : "anchor_confirmed"),
+      context: intelligenceTickContext({
+        anchorId,
+        invoiceKey: keyRecord?.key_kind === "invoice_key" ? keyRecord.key_label : null,
+        masterKey: keyRecord?.key_kind === "master_key" ? keyRecord.key_label : null
+      }),
+      key: keyRecord,
+      status: keyRecord?.status || "confirmed",
+      confirmed_status: keyRecord
+        ? `${keyRecord.key_kind}_${keyRecord.status}`
+        : "anchor_confirmed",
       moderation: "business_regulated_light_intelligence"
     });
+  }catch(e){ next(e); }
+});
+
+app.post("/admin/intelligence/master-keys", (req,res,next)=>{
+  try{
+    requireScope(req, "intelligence:write");
+    requireAdmin(req);
+    const body = parseBody(MasterKeyBody, req.body);
+    const key = upsertIntelligenceNetworkKey(db, {
+      keyKind: "master_key",
+      keyLabel: body.key_label,
+      accountId: body.account_id ?? null,
+      invoiceId: null,
+      anchorAssetId: body.anchor_asset_id,
+      status: body.status
+    });
+    res.status(201).json({ key });
   }catch(e){ next(e); }
 });
 
@@ -364,7 +403,16 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?)
   `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice));
 
-  res.status(201).json({ id, invoice });
+  const key = upsertIntelligenceNetworkKey(db, {
+    keyKind: "invoice_key",
+    keyLabel: `A1:${session_id}`,
+    accountId: req.authAccount.id,
+    invoiceId: id,
+    anchorAssetId: "major-ursa",
+    status: "confirmed"
+  });
+
+  res.status(201).json({ id, invoice, key });
 });
 
 app.get("/invoices", requireAccount, (req,res)=>{
