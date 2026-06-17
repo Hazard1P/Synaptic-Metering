@@ -21,6 +21,9 @@ import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntel
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
+import { validateStartupConfig } from "./lib/configValidation.js";
+
+validateStartupConfig();
 
 const app = express();
 let dbInstance;

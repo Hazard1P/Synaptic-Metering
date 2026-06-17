@@ -143,6 +143,14 @@ PUBLIC_BASE_URL=https://your-domain.example
 TOKEN_ENCRYPTION_KEY=base64-or-hex-32-byte-key-material
 ```
 
+In production, startup validation fails fast with a `StartupConfigError` if any deployment-critical setting is missing. Required production settings are `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, either `PUBLIC_BASE_URL` or `GOOGLE_REDIRECT_URI`, `API_KEY_DIGESTS`, and `CORS_ORIGINS`. `PUBLIC_BASE_URL` must be an absolute `https://` URL in production. Each startup error names the missing or invalid variable and the feature it affects so platform logs point directly to the deployment fix.
+
+The Google OAuth authorized redirect URI must exactly match the callback URL used by the app:
+
+```text
+https://<metering-origin-or-host-and-mounted-path>/auth/google/callback
+```
+
 Optional OAuth/session configuration:
 
 ```bash
