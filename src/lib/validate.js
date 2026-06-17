@@ -11,7 +11,7 @@ export const StartBody = z.object({
 
 export const HeartbeatBody = z.object({
   seconds: z.number().int().min(1).max(10).default(1),
-  anchor_id: z.enum(["major-ursa", "cassiopeia", "isolated-blackholes"]).default("major-ursa")
+  anchor_id: z.string().min(1).max(120).default("major-ursa")
 });
 
 

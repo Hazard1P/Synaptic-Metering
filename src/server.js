@@ -17,7 +17,7 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { ANCHORED_ASSET_MAP, intelligenceTickContext } from "./lib/anchoredIntelligence.js";
+import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -140,8 +140,8 @@ app.get("/intelligence/anchors", (req,res)=>{
   res.json({
     operation: "Seconds_Of_Intelligence",
     tick_rate_hz: 1,
-    assets: Object.values(ANCHORED_ASSET_MAP),
-    epoch: intelligenceTickContext().five_day_epoch
+    assets: listAnchoredAssets(db),
+    epoch: intelligenceTickContext({ db }).five_day_epoch
   });
 });
 
@@ -221,7 +221,7 @@ app.get("/intelligence/state", (req,res,next)=>{
     const invoiceKey = req.query?.invoice_key || req.query?.a1 || null;
     const masterKey = req.query?.master_key || null;
     res.json({
-      context: intelligenceTickContext({ anchorId, invoiceKey, masterKey }),
+      context: intelligenceTickContext({ db, anchorId, invoiceKey, masterKey }),
       confirmed_status: masterKey ? "network_confirmed" : (invoiceKey ? "invoice_key_confirmed" : "anchor_confirmed"),
       moderation: "business_regulated_light_intelligence"
     });
@@ -239,7 +239,7 @@ app.post("/sessions", (req,res,next)=>{
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
     `).run(id, accountId, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ anchorId: "major-ursa" }) });
+    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ db, anchorId: "major-ursa" }) });
   }catch(e){ next(e); }
 });
 
@@ -284,7 +284,7 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
       VALUES (?, ?, ?, ?)
     `).run(evId, sessionId, sess.current_item_id, body.seconds);
 
-    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ anchorId: body.anchor_id || "major-ursa" }) });
+    res.json({ ok:true, added_seconds: body.seconds, item_id: sess.current_item_id, intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "major-ursa" }) });
   }catch(e){ next(e); }
 });
 
@@ -356,7 +356,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       unit_price_cents: l.unit_price.cents,
       line_total_cents: l.cost.cents
     })),
-    intelligence: intelligenceTickContext({ anchorId: "major-ursa", invoiceKey: `A1:${session_id}` }),
+    intelligence: intelligenceTickContext({ db, anchorId: "major-ursa", invoiceKey: `A1:${session_id}` }),
     network: {
       a1_box_key: `A1:${session_id}`,
       operation: "Seconds_Of_Intelligence",
@@ -476,8 +476,8 @@ app.get("/ndsp/state", (req,res)=>{
     },
     tick_rate_hz: 1,
     persistence: "server-db",
-    anchored_assets: Object.values(ANCHORED_ASSET_MAP),
-    rolling_epoch: intelligenceTickContext().five_day_epoch
+    anchored_assets: listAnchoredAssets(db),
+    rolling_epoch: intelligenceTickContext({ db }).five_day_epoch
   };
 
   // Provide a minimal "state" object structure compatible with the UI.

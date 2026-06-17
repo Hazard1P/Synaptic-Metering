@@ -33,6 +33,47 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
   }
 });
 
+const DEFAULT_ANCHOR_ID = "major-ursa";
+const ANCHORED_ASSET_COLUMNS = `
+  id, label, asset_type, permanence, role, physics_role, tick_rate_hz, vector
+`;
+
+function normalizeRawAnchorId(anchorId){
+  return String(anchorId || DEFAULT_ANCHOR_ID).trim().toLowerCase();
+}
+
+function fallbackAnchor(anchorId = DEFAULT_ANCHOR_ID){
+  const id = normalizeRawAnchorId(anchorId);
+  return ANCHORED_ASSET_MAP[id] || ANCHORED_ASSET_MAP[DEFAULT_ANCHOR_ID];
+}
+
+export function loadAnchoredAsset(db, anchorId = DEFAULT_ANCHOR_ID){
+  const id = normalizeRawAnchorId(anchorId);
+  const asset = db.prepare(`
+    SELECT ${ANCHORED_ASSET_COLUMNS}
+    FROM anchored_assets
+    WHERE id = ?
+  `).get(id);
+  return asset || null;
+}
+
+export function listAnchoredAssets(db){
+  const rows = db.prepare(`
+    SELECT ${ANCHORED_ASSET_COLUMNS}
+    FROM anchored_assets
+    ORDER BY id
+  `).all();
+  return rows.length ? rows : Object.values(ANCHORED_ASSET_MAP);
+}
+
+export function resolveAnchoredAsset(db, anchorId = DEFAULT_ANCHOR_ID){
+  if(!db) return fallbackAnchor(anchorId);
+
+  return loadAnchoredAsset(db, anchorId)
+    || loadAnchoredAsset(db, DEFAULT_ANCHOR_ID)
+    || fallbackAnchor(anchorId);
+}
+
 export function unixSeconds(date = new Date()){
   return Math.floor(date.getTime() / 1000);
 }
@@ -52,21 +93,20 @@ export function fiveDayRollingEpoch(nowUnix = unixSeconds()){
   };
 }
 
-export function normalizeAnchorId(anchorId){
-  const id = String(anchorId || "major-ursa").trim().toLowerCase();
-  return ANCHORED_ASSET_MAP[id] ? id : "major-ursa";
+export function normalizeAnchorId(anchorId, db = null){
+  return resolveAnchoredAsset(db, anchorId).id;
 }
 
-export function intelligenceTickContext({ anchorId = "major-ursa", invoiceKey = null, masterKey = null, now = new Date() } = {}){
+export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchoredAsset = null, db = null, invoiceKey = null, masterKey = null, now = new Date() } = {}){
   const now_unix = unixSeconds(now);
-  const normalizedAnchorId = normalizeAnchorId(anchorId);
+  const asset = anchoredAsset || resolveAnchoredAsset(db, anchorId);
   return {
     operation: "Seconds_Of_Intelligence",
-    tick_rate_hz: ANCHORED_ASSET_MAP[normalizedAnchorId].tick_rate_hz,
+    tick_rate_hz: asset.tick_rate_hz,
     tick_seconds: 1,
     now_unix,
     five_day_epoch: fiveDayRollingEpoch(now_unix),
-    anchored_asset: ANCHORED_ASSET_MAP[normalizedAnchorId],
+    anchored_asset: asset,
     invoice_key: invoiceKey,
     master_key: masterKey,
     network_governance: masterKey ? "genesis_core_network" : "invoice_bound",
