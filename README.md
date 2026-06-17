@@ -193,7 +193,21 @@ SameSite=None; Secure
 That embedded mode also requires `COOKIE_SECURE=true`, HTTPS end-to-end from the browser, and a browser-compatible frame policy/CSP from the reverse proxy and application.
 
 ## Serverless deployment notes
-If the platform reports that a “serverless function has stopped working,” verify that the handler imports the exported Express `app` instead of starting a second listener. This code only calls `listen()` when `SERVERLESS` is not set to `true` and `NODE_ENV` is not `test`; serverless wrappers should set `SERVERLESS=true` and export/use `app` from `src/server.js`.
+If the platform reports that a “serverless function has stopped working,” verify these requirements before redeploying:
+
+- Set `SERVERLESS=true` in the serverless environment. This prevents `src/server.js` from calling `listen()` and allows the platform handler to import the exported Express `app`.
+- Export or import `app` from `src/server.js` in the platform adapter instead of starting a second HTTP listener. The database is opened lazily, so importing `app` alone should not require writable local storage during module load.
+- Set `DATABASE_PATH` to an explicit absolute SQLite file path inside a writable, persistent mounted volume, for example `/mnt/data/app.db`. Do not point `DATABASE_PATH` at the read-only deployment bundle or an ephemeral directory if billing/session data must survive cold starts.
+- Ensure the parent directory for `DATABASE_PATH` already exists and is readable/writable by the serverless runtime. With `SERVERLESS=true`, startup fails with a clear error if `DATABASE_PATH` is missing, its parent directory is absent, or the parent path is not writable.
+- Set `SQLITE_JOURNAL_MODE=DELETE` for platforms that do not support SQLite WAL sidecar files (`.db-wal` and `.db-shm`). `DELETE` is the default when `SERVERLESS=true`; non-serverless deployments default to `WAL`. Override with `SQLITE_JOURNAL_MODE=WAL` only when the mounted volume supports persistent sidecar files and SQLite file locking.
+
+Example serverless environment:
+
+```text
+SERVERLESS=true
+DATABASE_PATH=/mnt/data/app.db
+SQLITE_JOURNAL_MODE=DELETE
+```
 
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
