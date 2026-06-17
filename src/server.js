@@ -23,7 +23,22 @@ import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, parseBo
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 
 const app = express();
-const db = openDb();
+let dbInstance;
+
+function getDb(){
+  if(!dbInstance){
+    dbInstance = openDb();
+  }
+  return dbInstance;
+}
+
+const db = new Proxy({}, {
+  get(_target, prop){
+    const activeDb = getDb();
+    const value = activeDb[prop];
+    return typeof value === "function" ? value.bind(activeDb) : value;
+  }
+});
 
 function parseCsvEnv(value){
   return (value || "")
@@ -524,4 +539,4 @@ if(process.env.SERVERLESS !== "true" && process.env.NODE_ENV !== "test") {
   boot();
 }
 
-export { app, db, boot };
+export { app, db, getDb, boot };
