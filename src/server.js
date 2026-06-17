@@ -18,6 +18,7 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
+import { CANONICAL_DYSON_MAP_ID, loadMapDatabase } from "./lib/mapDatabase.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -260,6 +261,24 @@ app.post("/catalog/refresh", (req,res,next)=>{
     requireScope(req, "catalog:write");
     const rows = refreshCatalog(db);
     res.json({ ok:true, items: rows });
+  }catch(e){ next(e); }
+});
+
+app.get("/map/database", (req,res,next)=>{
+  try{
+    requireScope(req, "intelligence:read");
+    const mapId = req.query?.map_id || CANONICAL_DYSON_MAP_ID;
+    const map = loadMapDatabase(db, mapId);
+    if(!map) return res.status(404).json({ error: "map_not_found" });
+    res.json({
+      map_id: map.map_id,
+      asset_path: map.asset_path,
+      metadata_path: map.metadata_path,
+      sha256_digest: map.sha256_digest,
+      anchor_asset_id: map.anchor_asset_id,
+      created_at: map.created_at,
+      star_systems: map.star_systems
+    });
   }catch(e){ next(e); }
 });
 

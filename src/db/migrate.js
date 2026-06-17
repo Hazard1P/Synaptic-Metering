@@ -1,4 +1,5 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
+import { CANONICAL_DYSON_MAP, sha256ForRelativePath } from "../lib/mapDatabase.js";
 
 if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
@@ -83,6 +84,36 @@ CREATE TABLE IF NOT EXISTS anchored_assets (
   vector TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS map_assets (
+  map_id TEXT PRIMARY KEY,
+  asset_path TEXT NOT NULL,
+  metadata_path TEXT NOT NULL,
+  sha256_digest TEXT NOT NULL,
+  anchor_asset_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_map_assets_anchor_asset_id
+  ON map_assets(anchor_asset_id);
+
+CREATE TABLE IF NOT EXISTS map_star_systems (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  map_id TEXT NOT NULL,
+  system_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  sector TEXT,
+  ordinal INTEGER NOT NULL DEFAULT 0,
+  coordinates_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(map_id) REFERENCES map_assets(map_id) ON DELETE CASCADE,
+  UNIQUE(map_id, system_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_map_star_systems_map_id
+  ON map_star_systems(map_id, ordinal);
 
 CREATE TABLE IF NOT EXISTS intelligence_network_keys (
   id TEXT PRIMARY KEY,
@@ -208,8 +239,48 @@ db.prepare(`
   VALUES
     ('major-ursa', 'Major Ursa anchored star/database', 'constellation_database', 'permanent_anchor', 'governance_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'tip_to_dipper_epoch_unix_discrepancy'),
     ('cassiopeia', 'Cassiopeia quantum biometrics anchor', 'constellation_biometrics', 'permanent_anchor', 'quantum_biometric_moderation', 'considered_in_data_and_physics_not_pulled_through', 1, 'relative_anchored_star_biometrics'),
-    ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference')
+    ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference'),
+    ('dyson-sphere-ring-1', 'Dyson-Sphere Ring 1 map-backed star database', 'map_backed_star_database', 'permanent_anchor', 'dyson_sphere_ring_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'map_database_anchor_digest')
 `).run();
+
+const dysonMapDigest = sha256ForRelativePath(CANONICAL_DYSON_MAP.asset_path);
+db.prepare(`
+  INSERT INTO map_assets (map_id, asset_path, metadata_path, sha256_digest, anchor_asset_id)
+  VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(map_id) DO UPDATE SET
+    asset_path=excluded.asset_path,
+    metadata_path=excluded.metadata_path,
+    sha256_digest=excluded.sha256_digest,
+    anchor_asset_id=excluded.anchor_asset_id
+`).run(
+  CANONICAL_DYSON_MAP.map_id,
+  CANONICAL_DYSON_MAP.asset_path,
+  CANONICAL_DYSON_MAP.metadata_path,
+  dysonMapDigest,
+  CANONICAL_DYSON_MAP.anchor_asset_id
+);
+
+const upsertStarSystem = db.prepare(`
+  INSERT INTO map_star_systems (map_id, system_id, name, role, sector, ordinal, coordinates_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(map_id, system_id) DO UPDATE SET
+    name=excluded.name,
+    role=excluded.role,
+    sector=excluded.sector,
+    ordinal=excluded.ordinal,
+    coordinates_json=excluded.coordinates_json
+`);
+for(const system of CANONICAL_DYSON_MAP.star_systems){
+  upsertStarSystem.run(
+    CANONICAL_DYSON_MAP.map_id,
+    system.system_id,
+    system.name,
+    system.role,
+    system.sector,
+    system.ordinal,
+    system.coordinates_json
+  );
+}
 
 const catalogColumns = [
   ["default_qty", "INTEGER NOT NULL DEFAULT 0"],
