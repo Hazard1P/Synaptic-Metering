@@ -19,6 +19,8 @@ import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
+import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
+import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
