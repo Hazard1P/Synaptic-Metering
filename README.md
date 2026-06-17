@@ -132,7 +132,7 @@ This service supports first-class internal accounts linked to Google OAuth ident
 - `GET /auth/google/start` — starts the Google OAuth authorization-code flow.
 - `GET /auth/google/callback` — exchanges the code, verifies the Google ID token, links or creates the internal account, and creates the HTTP-only account session cookie.
 - `POST /auth/logout` — deletes the current web auth session and clears the session cookie.
-- `GET /me` — returns the authenticated internal account and linked identities.
+- `GET /me` — returns the authenticated internal account and linked identities. Business allowlist metadata is stored internally and is not returned by this public account route.
 
 ### Required environment variables
 
@@ -156,6 +156,9 @@ Optional OAuth/session configuration:
 
 ```bash
 GOOGLE_ALLOWED_DOMAINS=example.com,subsidiary.example
+GOOGLE_ALLOWED_EMAILS=allowed-user@example.com,second-user@example.com
+ADMIN_GOOGLE_EMAILS=admin-user@example.com
+BUSINESS_GOOGLE_EMAILS=business-user@example.com
 GOOGLE_OAUTH_RETAIN_TOKENS=false
 GOOGLE_OAUTH_PROMPT=select_account
 OAUTH_SUCCESS_REDIRECT=/me
@@ -165,7 +168,7 @@ AUTH_SESSION_TTL_DAYS=30
 COOKIE_SECURE=true
 ```
 
-Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
+Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_ALLOWED_EMAILS` only when login should be limited to a comma-separated list of verified Google identity emails. Set `ADMIN_GOOGLE_EMAILS` to bootstrap matching verified Google identities as internal `admin` accounts on login, and set `BUSINESS_GOOGLE_EMAILS` to record internal business-association metadata for matching verified identities. Keep these lists in the deployment secret manager or environment; do not commit real private emails. Business-association metadata is stored separately from encrypted OAuth token material and is not exposed by public routes such as `/me`. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
 
 ## Production: SynapticSystems.ca web link
 
@@ -180,6 +183,9 @@ GOOGLE_REDIRECT_URI=https://<metering-origin>/auth/google/callback
 COOKIE_SECURE=true
 TRUST_PROXY=true
 NODE_ENV=production
+GOOGLE_ALLOWED_EMAILS=<allowed-user@example.com>,<second-user@example.com>
+ADMIN_GOOGLE_EMAILS=<admin-user@example.com>
+BUSINESS_GOOGLE_EMAILS=<business-contact@example.com>
 ```
 
 Replace `<metering-origin>` with the exact scheme and host that serves the app, for example `https://metering.SynapticSystems.ca`. If the app is mounted under a path, keep the origin in `CORS_ORIGINS` and include the mounted path in `PUBLIC_BASE_URL` and any reverse-proxy routing.
