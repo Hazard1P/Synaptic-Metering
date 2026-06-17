@@ -258,6 +258,131 @@ app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+
+app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireScope(req, "reports:read");
+    requireAdmin(req);
+    const window = parseQuarterReportWindow(req.query);
+
+    const usageByItem = db.prepare(`
+      SELECT ue.item_id, ci.label, ci.currency, ci.unit_name, ci.quantity_mode,
+        SUM(ue.seconds) AS metered_seconds,
+        COUNT(*) AS event_count
+      FROM usage_events ue
+      LEFT JOIN catalog_items ci ON ci.id = ue.item_id
+      WHERE ue.at >= ? AND ue.at < ?
+      GROUP BY ue.item_id, ci.label, ci.currency, ci.unit_name, ci.quantity_mode
+      ORDER BY ue.item_id
+    `).all(window.startSql, window.endSql);
+
+    const sessionsByAccount = db.prepare(`
+      SELECT s.account_id, a.display_name, a.role,
+        COUNT(*) AS session_count,
+        SUM(CASE WHEN s.status = 'open' THEN 1 ELSE 0 END) AS open_sessions,
+        SUM(CASE WHEN s.status = 'closed' THEN 1 ELSE 0 END) AS closed_sessions,
+        MIN(s.created_at) AS first_session_at,
+        MAX(COALESCE(s.closed_at, s.created_at)) AS last_session_at,
+        COALESCE(SUM(ue.seconds), 0) AS metered_seconds
+      FROM sessions s
+      LEFT JOIN accounts a ON a.id = s.account_id
+      LEFT JOIN usage_events ue ON ue.session_id = s.id AND ue.at >= ? AND ue.at < ?
+      WHERE s.created_at >= ? AND s.created_at < ?
+      GROUP BY s.account_id, a.display_name, a.role
+      ORDER BY session_count DESC, s.account_id
+    `).all(window.startSql, window.endSql, window.startSql, window.endSql);
+
+    const invoiceRows = db.prepare(`
+      SELECT id, account_id, session_id, source, status, payload_json, created_at, accepted_at, verified_at
+      FROM invoices
+      WHERE created_at >= ? AND created_at < ?
+      ORDER BY created_at DESC, id DESC
+    `).all(window.startSql, window.endSql);
+
+    const invoiceCountsByStatus = {};
+    const invoiceTotalsByAccount = new Map();
+    const anchorIds = new Set();
+    const networkKeys = new Set();
+    let invoiceQuantityTotal = 0;
+    let subtotalCents = 0;
+    let totalCents = 0;
+
+    for(const row of invoiceRows){
+      invoiceCountsByStatus[row.status] = (invoiceCountsByStatus[row.status] || 0) + 1;
+      let invoice = {};
+      try{ invoice = JSON.parse(row.payload_json || "{}"); }catch{ invoice = {}; }
+      const quantity = invoiceQuantity(invoice);
+      const rowSubtotal = cents(invoice?.totals?.subtotal_cents);
+      const rowTotal = cents(invoice?.totals?.total_cents ?? invoice?.total_cents);
+      invoiceQuantityTotal += quantity;
+      subtotalCents += rowSubtotal;
+      totalCents += rowTotal;
+      for(const anchorId of invoiceAnchorIds(invoice)) anchorIds.add(anchorId);
+      for(const key of invoiceNetworkKeys(invoice)) networkKeys.add(key);
+
+      const accountTotals = invoiceTotalsByAccount.get(row.account_id) || {
+        account_id: row.account_id,
+        invoice_count: 0,
+        invoice_quantity: 0,
+        subtotal_cents: 0,
+        total_cents: 0
+      };
+      accountTotals.invoice_count += 1;
+      accountTotals.invoice_quantity += quantity;
+      accountTotals.subtotal_cents += rowSubtotal;
+      accountTotals.total_cents += rowTotal;
+      invoiceTotalsByAccount.set(row.account_id, accountTotals);
+    }
+
+    const meteredSeconds = usageByItem.reduce((sum, row) => sum + Number(row.metered_seconds || 0), 0);
+    res.json({
+      report: {
+        type: "quarterly",
+        private: true,
+        year: window.year,
+        quarter: window.quarter,
+        period_start: window.start,
+        period_end: window.end
+      },
+      totals: {
+        metered_seconds: meteredSeconds,
+        invoice_quantity: invoiceQuantityTotal,
+        subtotal_cents: subtotalCents,
+        total_cents: totalCents
+      },
+      usage_by_item: usageByItem.map(row => ({
+        item_id: row.item_id,
+        label: row.label,
+        currency: row.currency,
+        unit_name: row.unit_name,
+        quantity_mode: row.quantity_mode,
+        metered_seconds: Number(row.metered_seconds || 0),
+        event_count: Number(row.event_count || 0)
+      })),
+      sessions_by_account: sessionsByAccount.map(row => ({
+        account_id: row.account_id,
+        display_name: row.display_name,
+        role: row.role,
+        session_count: Number(row.session_count || 0),
+        open_sessions: Number(row.open_sessions || 0),
+        closed_sessions: Number(row.closed_sessions || 0),
+        metered_seconds: Number(row.metered_seconds || 0),
+        first_session_at: row.first_session_at,
+        last_session_at: row.last_session_at
+      })),
+      invoices: {
+        count: invoiceRows.length,
+        counts_by_status: invoiceCountsByStatus,
+        totals_by_account: [...invoiceTotalsByAccount.values()]
+      },
+      anchors: {
+        anchor_ids: [...anchorIds].sort(),
+        network_keys: [...networkKeys].sort()
+      }
+    });
+  }catch(e){ next(e); }
+});
+
 // --- auth for everything else
 app.use((req,res,next)=>{ res.setHeader('X-Synaptics-Systems','seconds-metering-api'); next(); });
 app.use((req,res,next)=>{
@@ -265,6 +390,62 @@ app.use((req,res,next)=>{
   return requireApiKeyOrAccount(req,res,next);
 });
 
+
+
+function parseQuarterReportWindow(query){
+  const year = Number(query?.year);
+  const quarter = Number(query?.quarter);
+  if(!Number.isInteger(year) || year < 2000 || year > 9999){
+    const err = new Error("invalid_year");
+    err.status = 400;
+    throw err;
+  }
+  if(!Number.isInteger(quarter) || quarter < 1 || quarter > 4){
+    const err = new Error("invalid_quarter");
+    err.status = 400;
+    throw err;
+  }
+
+  const startMonth = (quarter - 1) * 3;
+  const start = new Date(Date.UTC(year, startMonth, 1));
+  const end = new Date(Date.UTC(quarter === 4 ? year + 1 : year, quarter === 4 ? 0 : startMonth + 3, 1));
+  return {
+    year,
+    quarter,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    startSql: start.toISOString().slice(0, 19).replace("T", " "),
+    endSql: end.toISOString().slice(0, 19).replace("T", " ")
+  };
+}
+
+function cents(value){
+  return Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : 0;
+}
+
+function invoiceQuantity(invoice){
+  const totalQuantity = invoice?.totals?.tracked_quantity;
+  if(Number.isFinite(Number(totalQuantity))) return Number(totalQuantity);
+  const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
+  return lines.reduce((sum, line) => sum + (Number.isFinite(Number(line?.quantity)) ? Number(line.quantity) : 0), 0);
+}
+
+function invoiceAnchorIds(invoice){
+  const ids = new Set();
+  const anchoredAssetId = invoice?.intelligence?.anchored_asset?.id;
+  if(anchoredAssetId) ids.add(String(anchoredAssetId));
+  const activeAnchorId = invoice?.intelligence?.map_database?.active_anchor_id;
+  if(activeAnchorId) ids.add(String(activeAnchorId));
+  return [...ids];
+}
+
+function invoiceNetworkKeys(invoice){
+  return [
+    invoice?.network?.a1_box_key,
+    invoice?.intelligence?.invoice_key,
+    invoice?.intelligence?.master_key
+  ].filter(Boolean).map(String);
+}
 
 function canAccessMeteringSession(req, sess){
   if(req.apiKeyAuthenticated) return true;
