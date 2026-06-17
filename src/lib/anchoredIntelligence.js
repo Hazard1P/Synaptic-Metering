@@ -154,6 +154,18 @@ export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchored
 }
 
 
+
+function publicBaseUrl(){
+  return (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+}
+
+function publicUrl(path){
+  const baseUrl = publicBaseUrl();
+  if(!baseUrl) return null;
+  const normalizedPath = String(path || "").startsWith("/") ? path : `/${path}`;
+  return `${baseUrl}${normalizedPath}`;
+}
+
 export const MAP_DATABASE_METADATA = Object.freeze({
   "dyson-sphere-ring-1": {
     business_association: "Synaptics.Systems deployment operations",
@@ -173,7 +185,11 @@ export function mapDatabaseStatus({ db = null, anchorId = "dyson-sphere-ring-1",
     business_association: metadata.business_association,
     owner_executive_director: metadata.owner_executive_director,
     authentication_status: isRequestedAnchorActive ? "authenticated_active" : "fallback_anchor_active",
+    canonical_map_url: publicUrl(metadata.physical_map_image_url),
+    map_database_url: publicUrl(`/map/database?anchor_id=${asset.id}`),
+    map_authentication_url: publicUrl(`/map/authenticate/${asset.id}`),
     physical_map_image_url: metadata.physical_map_image_url,
+    physical_map_image_url_absolute: publicUrl(metadata.physical_map_image_url),
     checked_at: now.toISOString()
   };
 }
