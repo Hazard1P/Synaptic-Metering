@@ -19,7 +19,11 @@ export function computeSessionSummary(db, sessionId){
   const itemMap = new Map(items.map(i=>[i.id,i]));
 
   const usage = db.prepare(`
-    SELECT item_id, SUM(seconds) AS seconds
+    SELECT
+      item_id,
+      SUM(seconds) AS seconds,
+      SUM(CASE WHEN COALESCE(event_kind, 'live_tick') = 'live_tick' THEN seconds ELSE 0 END) AS live_seconds,
+      SUM(CASE WHEN event_kind = 'recovery_adjustment' THEN seconds ELSE 0 END) AS recovery_adjustment_seconds
     FROM usage_events
     WHERE session_id=?
     GROUP BY item_id
@@ -28,20 +32,28 @@ export function computeSessionSummary(db, sessionId){
   let totalCents = 0;
   let totalSeconds = 0;
   let totalQuantity = 0;
+  let totalLiveSeconds = 0;
+  let totalRecoverySeconds = 0;
 
   const lines = usage.map(u => {
     const item = itemMap.get(u.item_id);
     const unit = item?.unit_price_cents ?? 0;
     const seconds = u.seconds || 0;
+    const liveSeconds = u.live_seconds || 0;
+    const recoveryAdjustmentSeconds = u.recovery_adjustment_seconds || 0;
     const quantity = normalizeQuantity(item, seconds);
     const costCents = unit * quantity;
     totalCents += costCents;
     totalSeconds += seconds;
+    totalLiveSeconds += liveSeconds;
+    totalRecoverySeconds += recoveryAdjustmentSeconds;
     totalQuantity += quantity;
     return {
       item_id: u.item_id,
       label: item?.label ?? "(unknown item)",
       seconds,
+      live_seconds: liveSeconds,
+      recovery_adjustment_seconds: recoveryAdjustmentSeconds,
       quantity,
       default_qty: item?.default_qty ?? 0,
       quantity_unit: item?.unit_name ?? "second",
@@ -65,6 +77,8 @@ export function computeSessionSummary(db, sessionId){
     },
     metrics: {
       intelligence_seconds: totalSeconds,
+      live_tick_seconds: totalLiveSeconds,
+      recovery_adjustment_seconds: totalRecoverySeconds,
       tracked_quantity: totalQuantity,
       quantity_unit: "second"
     },
