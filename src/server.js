@@ -17,8 +17,7 @@ import {
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
-import { intelligenceTickContext, listAnchoredAssets } from "./lib/anchoredIntelligence.js";
-import { CANONICAL_DYSON_MAP_ID, loadMapDatabase } from "./lib/mapDatabase.js";
+import { intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
@@ -146,6 +145,13 @@ app.get("/intelligence/anchors", (req,res)=>{
   });
 });
 
+app.get("/map/database", (req,res,next)=>{
+  try{
+    const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
+    res.json({ map_database: mapDatabaseStatus({ db, anchorId }) });
+  }catch(e){ next(e); }
+});
+
 // --- Google OAuth + account sessions
 app.use(loadAuthenticatedAccount(db));
 app.get("/auth/google/start", startGoogleOAuth);
@@ -159,6 +165,31 @@ app.get("/me", requireAccount, (req,res)=>{
     ORDER BY provider_name
   `).all(req.authAccount.id);
   res.json({ account: req.authAccount, identities });
+});
+
+app.get("/map/authenticate/:mapId", (req,res,next)=>{
+  try{
+    const hasApiKey = Boolean(req.header("x-api-key"));
+    const hasAccount = Boolean(req.authAccount);
+
+    const sendAuthentication = () => {
+      const result = authenticateStoredMapAsset(db, req.params.mapId, {
+        includePrivateMetadata: Boolean(req.apiKeyAuthenticated || req.authAccount)
+      });
+      if(!result) return res.status(404).json({ error: "map_asset_not_found" });
+      return res.json(result);
+    };
+
+    if(hasAccount) return sendAuthentication();
+    if(hasApiKey){
+      return requireApiKeyOrAccount(req, res, (err) => {
+        if(err) return next(err);
+        return sendAuthentication();
+      });
+    }
+
+    return sendAuthentication();
+  }catch(e){ next(e); }
 });
 
 const ACCOUNT_ROLES = new Set(["user", "admin"]);
@@ -264,23 +295,6 @@ app.post("/catalog/refresh", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
-app.get("/map/database", (req,res,next)=>{
-  try{
-    requireScope(req, "intelligence:read");
-    const mapId = req.query?.map_id || CANONICAL_DYSON_MAP_ID;
-    const map = loadMapDatabase(db, mapId);
-    if(!map) return res.status(404).json({ error: "map_not_found" });
-    res.json({
-      map_id: map.map_id,
-      asset_path: map.asset_path,
-      metadata_path: map.metadata_path,
-      sha256_digest: map.sha256_digest,
-      anchor_asset_id: map.anchor_asset_id,
-      created_at: map.created_at,
-      star_systems: map.star_systems
-    });
-  }catch(e){ next(e); }
-});
 
 app.get("/intelligence/state", (req,res,next)=>{
   try{
@@ -304,7 +318,8 @@ app.get("/intelligence/state", (req,res,next)=>{
     res.json({
       context: intelligenceTickContext({ db, anchorId, invoiceKey, masterKey }),
       confirmed_status: masterKey ? "network_confirmed" : (invoiceKey ? "invoice_key_confirmed" : "anchor_confirmed"),
-      moderation: "business_regulated_light_intelligence"
+      moderation: "business_regulated_light_intelligence",
+      map_database: mapDatabaseStatus({ db, anchorId })
     });
   }catch(e){ next(e); }
 });

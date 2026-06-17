@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Dyson-Sphere Ring-1 physical map database anchor</title>
+  <desc id="desc">Operator-facing reference map for the Dyson-Sphere Ring-1 anchor.</desc>
+  <rect width="960" height="540" fill="#06101a"/>
+  <circle cx="480" cy="270" r="74" fill="#ffd76a" opacity="0.96"/>
+  <circle cx="480" cy="270" r="168" fill="none" stroke="#8fe3ff" stroke-width="10" opacity="0.9"/>
+  <circle cx="480" cy="270" r="218" fill="none" stroke="#7c4dff" stroke-width="3" stroke-dasharray="18 16" opacity="0.76"/>
+  <g fill="#00ff88">
+    <circle cx="312" cy="270" r="10"/><circle cx="648" cy="270" r="10"/>
+    <circle cx="480" cy="102" r="10"/><circle cx="480" cy="438" r="10"/>
+  </g>
+  <text x="48" y="70" fill="#eaf2ff" font-family="system-ui,Segoe UI,Arial" font-size="34" font-weight="700">Dyson-Sphere Ring-1 Anchor</text>
+  <text x="48" y="112" fill="#9fb0c9" font-family="system-ui,Segoe UI,Arial" font-size="20">Physical map database reference • authenticated active</text>
+  <text x="48" y="490" fill="#8fe3ff" font-family="system-ui,Segoe UI,Arial" font-size="18">Anchor ID: dyson-sphere-ring-1</text>
+</svg>

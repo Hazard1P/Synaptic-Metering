@@ -127,6 +127,16 @@
             <a class="btn" href="/console#invoice-history">Invoice history</a>
           </div>
         </section>
+
+        <section class="panel status-box" aria-live="polite">
+          <h2>Map Database Anchor</h2>
+          <p class="status-line" id="mapAuthStatus">Checking map database…</p>
+          <p class="muted"><strong>Anchor:</strong> <span id="mapAnchorId">—</span></p>
+          <p class="muted"><strong>Map:</strong> <span id="mapLabel">—</span></p>
+          <p class="muted"><strong>Business:</strong> <span id="mapBusiness">—</span></p>
+          <p class="muted"><strong>Owner / Executive Director:</strong> <span id="mapOwner">—</span></p>
+          <p class="muted"><a id="mapImageLink" href="#" target="_blank" rel="noreferrer">Open physical map image</a></p>
+        </section>
       </div>
 
       <div class="grid">
@@ -175,6 +185,36 @@
       $("accountLinks").hidden = false;
     }
 
+    function setMapDatabaseStatus(state){
+      const map = state?.map_database || state || {};
+      $("mapAuthStatus").textContent = map.authentication_status === "authenticated_active"
+        ? "Map database active"
+        : (map.authentication_status || "Map database unavailable");
+      $("mapAnchorId").textContent = map.active_anchor_id || "—";
+      $("mapLabel").textContent = map.map_label || "—";
+      $("mapBusiness").textContent = map.business_association || "—";
+      $("mapOwner").textContent = map.owner_executive_director || "—";
+      if(map.physical_map_image_url){
+        $("mapImageLink").href = map.physical_map_image_url;
+        $("mapImageLink").hidden = false;
+      }else{
+        $("mapImageLink").hidden = true;
+      }
+    }
+
+    async function loadMapDatabaseStatus(){
+      try{
+        const response = await fetch("/map/database?anchor_id=dyson-sphere-ring-1", {
+          credentials: "same-origin",
+          headers: { "Accept": "application/json" }
+        });
+        if(!response.ok) throw new Error("HTTP " + response.status);
+        setMapDatabaseStatus(await response.json());
+      }catch(e){
+        setMapDatabaseStatus({ authentication_status: "Map database status unavailable" });
+      }
+    }
+
     async function loadAccountStatus(){
       try{
         const response = await fetch("/me", {
@@ -200,6 +240,7 @@
 
     $("build").textContent = new Date().toISOString();
     loadAccountStatus();
+    loadMapDatabaseStatus();
   </script>
 </body>
 </html>
