@@ -167,6 +167,31 @@ app.get("/me", requireAccount, (req,res)=>{
   res.json({ account: req.authAccount, identities });
 });
 
+app.get("/map/authenticate/:mapId", (req,res,next)=>{
+  try{
+    const hasApiKey = Boolean(req.header("x-api-key"));
+    const hasAccount = Boolean(req.authAccount);
+
+    const sendAuthentication = () => {
+      const result = authenticateStoredMapAsset(db, req.params.mapId, {
+        includePrivateMetadata: Boolean(req.apiKeyAuthenticated || req.authAccount)
+      });
+      if(!result) return res.status(404).json({ error: "map_asset_not_found" });
+      return res.json(result);
+    };
+
+    if(hasAccount) return sendAuthentication();
+    if(hasApiKey){
+      return requireApiKeyOrAccount(req, res, (err) => {
+        if(err) return next(err);
+        return sendAuthentication();
+      });
+    }
+
+    return sendAuthentication();
+  }catch(e){ next(e); }
+});
+
 const ACCOUNT_ROLES = new Set(["user", "admin"]);
 
 app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{

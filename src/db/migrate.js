@@ -1,4 +1,5 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
+import { seedMapAssetDigests } from "../lib/mapAuthentication.js";
 
 if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
@@ -83,6 +84,20 @@ CREATE TABLE IF NOT EXISTS anchored_assets (
   vector TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS map_assets (
+  map_id TEXT PRIMARY KEY,
+  anchor_asset_id TEXT NOT NULL,
+  digest TEXT NOT NULL CHECK(length(digest) = 64),
+  verification_status TEXT NOT NULL DEFAULT 'verified' CHECK(verification_status IN ('verified', 'pending', 'digest_mismatch', 'revoked')),
+  metadata_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_map_assets_anchor_asset_id
+  ON map_assets(anchor_asset_id);
 
 CREATE TABLE IF NOT EXISTS intelligence_network_keys (
   id TEXT PRIMARY KEY,
@@ -211,6 +226,8 @@ db.prepare(`
     ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference'),
     ('dyson-sphere-ring-1', 'Dyson-Sphere Ring-1 map database', 'physical_map_database', 'permanent_anchor', 'operator_map_database', 'map_database_reference_anchor', 1, 'ring_1_physical_map_reference')
 `).run();
+
+seedMapAssetDigests(db);
 
 const catalogColumns = [
   ["default_qty", "INTEGER NOT NULL DEFAULT 0"],
