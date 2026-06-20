@@ -12,8 +12,11 @@ export const StartBody = z.object({
 export const HeartbeatBody = z.object({
   seconds: z.literal(1).default(1),
   recovered_seconds: z.number().int().min(1).max(3600).optional(),
+  idempotency_key: z.string().min(1).max(160).optional(),
+  event_timestamp: z.string().datetime({ offset: true }).optional(),
+  tick_sequence: z.number().int().nonnegative().safe().optional(),
   anchor_id: z.string().min(1).max(120).default("dyson-sphere-ring-1")
-});
+}).strict();
 
 
 export const MasterKeyBody = z.object({
