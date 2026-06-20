@@ -11,9 +11,18 @@ services:
       - API_KEY_DIGESTS=${API_KEY_DIGESTS:?Set API_KEY_DIGESTS to comma-separated SHA-256 API key digests}
       - CORS_ORIGINS=${CORS_ORIGINS:?Set CORS_ORIGINS to comma-separated allowed browser origins}
       - NODE_ENV=${NODE_ENV:-production}
+      # Migration workflow: run exactly one one-shot migration job per release before starting/scaling the API:
+      #   docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
+      # Keep RUN_MIGRATIONS=false for compose-managed API containers so future replicas do not race migrations.
+      # For a single ad-hoc container only, set RUN_MIGRATIONS=true to run npm run migrate before npm start.
+      - RUN_MIGRATIONS=${RUN_MIGRATIONS:-false}
       - TRUST_PROXY=${TRUST_PROXY:-true}
       - INVOICE_TEMPLATE_PATH=/app/templates/Invoice.html
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public https:// origin}
+      - DB_AT_REST_ENCRYPTION=${DB_AT_REST_ENCRYPTION:?Set DB_AT_REST_ENCRYPTION=managed-encrypted-storage}
+      - STORAGE_ENCRYPTION_AT_REST=${STORAGE_ENCRYPTION_AT_REST:?Set STORAGE_ENCRYPTION_AT_REST=true}
+      - STORAGE_ENCRYPTION_PROVIDER=${STORAGE_ENCRYPTION_PROVIDER:?Document encrypted storage provider/control}
+      - STORAGE_ENCRYPTION_EVIDENCE=${STORAGE_ENCRYPTION_EVIDENCE:?Document encrypted storage evidence}
     volumes:
       - ./data:/app/data
       - ./templates:/app/templates:ro

@@ -15,7 +15,7 @@ export function computeSessionSummary(db, sessionId){
   const session = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
   if(!session) return null;
 
-  const items = db.prepare("SELECT * FROM catalog_items").all();
+  const items = db.prepare("SELECT * FROM catalog_items WHERE active = 1").all();
   const itemMap = new Map(items.map(i=>[i.id,i]));
 
   const usage = db.prepare(`
@@ -59,6 +59,20 @@ export function computeSessionSummary(db, sessionId){
       quantity_unit: item?.unit_name ?? "second",
       quantity_mode: item?.quantity_mode ?? "seconds",
       auto_increment_by: item?.auto_increment_by ?? 1,
+      catalog_version: item?.version ?? "legacy",
+      catalog_effective_from: item?.effective_from ?? null,
+      catalog_effective_to: item?.effective_to ?? null,
+      catalog_source: item?.source ?? null,
+      price_snapshot: {
+        item_id: u.item_id,
+        label: item?.label ?? "(unknown item)",
+        unit_price_cents: unit,
+        currency: item?.currency ?? "CAD",
+        version: item?.version ?? "legacy",
+        effective_from: item?.effective_from ?? null,
+        effective_to: item?.effective_to ?? null,
+        source: item?.source ?? null
+      },
       unit_price: centsToMoney(unit, item?.currency ?? "CAD"),
       cost: centsToMoney(costCents, item?.currency ?? "CAD"),
     };
@@ -83,6 +97,8 @@ export function computeSessionSummary(db, sessionId){
       quantity_unit: "second"
     },
     lines,
+    catalog_versions: [...new Set(lines.map(l => l.catalog_version).filter(Boolean))],
+    catalog_snapshot: lines.map(l => l.price_snapshot),
     total: centsToMoney(totalCents, "CAD")
   };
 }

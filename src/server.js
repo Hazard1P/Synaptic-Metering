@@ -2,12 +2,12 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { nanoid } from "nanoid";
 
 import { openDb } from "./db/db.js";
 import {
+  configureApiKeyAuth,
   googleOAuthCallback,
   loadAuthenticatedAccount,
   logout,
@@ -18,7 +18,7 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
-import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
+import { normalizedServerInvoicePayload, verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
@@ -45,6 +45,77 @@ const db = new Proxy({}, {
   }
 });
 
+configureApiKeyAuth(db);
+
+
+function logJson(level, event, fields = {}){
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    service: "synaptics-seconds-api",
+    ...fields
+  };
+  const line = JSON.stringify(entry);
+  if(level === "error") console.error(line);
+  else if(level === "warn") console.warn(line);
+  else console.log(line);
+}
+
+function auditLog(event, req, fields = {}){
+  logJson("info", "audit", {
+    audit_event: event,
+    request_id: req?.id,
+    method: req?.method,
+    path: req?.originalUrl || req?.url,
+    actor: req?.authAccount?.id || req?.auth?.accountId || (req?.apiKeyAuthenticated ? "api-key" : null),
+    auth_type: req?.apiKeyAuthenticated ? "api_key" : (req?.authAccount ? "account_session" : "unknown"),
+    ...fields
+  });
+}
+
+function requestIdMiddleware(req, res, next){
+  const inboundRequestId = String(req.header("x-request-id") || req.header("x-correlation-id") || "").trim();
+  req.id = inboundRequestId || `req_${nanoid(18)}`;
+  res.setHeader("X-Request-ID", req.id);
+
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if(res.statusCode >= 400 && body && typeof body === "object" && !Array.isArray(body)){
+      return originalJson({ request_id: req.id, ...body });
+    }
+    return originalJson(body);
+  };
+
+  const started = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    logJson(res.statusCode >= 500 ? "error" : "info", "http_request", {
+      request_id: req.id,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      route: req.route?.path,
+      status: res.statusCode,
+      duration_ms: Number(durationMs.toFixed(3)),
+      remote_addr: req.ip,
+      user_agent: req.get("user-agent") || null,
+      auth_type: req.apiKeyAuthenticated ? "api_key" : (req.authAccount ? "account_session" : "none")
+    });
+    if(req.apiKeyAuthenticated || req.header("x-api-key")){
+      auditLog("api_key_authentication", req, { status: req.apiKeyAuthenticated && res.statusCode < 400 ? "success" : "failure" });
+    }
+  });
+  next();
+}
+
+function dbReady(){
+  try{
+    db.prepare("SELECT 1 AS ready").get();
+    return { ok: true };
+  }catch(e){
+    return { ok: false, error: e?.message || "database_unavailable" };
+  }
+}
 
 function publicBaseUrl(req){
   const configured = String(process.env.PUBLIC_BASE_URL || "").trim();
@@ -167,11 +238,11 @@ function enforceHttpsInProduction(req, res, next){
 app.set("trust proxy", trustProxySetting);
 
 // --- middleware
+app.use(requestIdMiddleware);
 app.use(enforceHttpsInProduction);
 app.use(helmet());
 app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
-app.use(morgan("tiny"));
 app.use(rateLimit({ windowMs: 60_000, max: 240 })); // 240 req/min default
 
 import path from "path";
@@ -318,8 +389,93 @@ app.get("/genesis", (req,res)=>{
   res.status(404).type("text").send("Genesis page not found");
 });
 
-// --- health (public)
+const REQUIRED_SCHEMA = [
+  { table: "schema_migrations", columns: ["version", "description", "applied_at"] },
+  { table: "accounts", columns: ["id", "role", "created_at", "updated_at"] },
+  { table: "account_identities", columns: ["id", "account_id", "provider_name", "provider_subject"] },
+  { table: "auth_sessions", columns: ["id", "account_id", "expires_at"] },
+  { table: "catalog_items", columns: ["id", "label", "unit_price_cents", "currency", "default_qty", "unit_name", "quantity_mode", "auto_increment_by"] },
+  { table: "sessions", columns: ["id", "account_id", "seat_id", "status"] },
+  { table: "usage_events", columns: ["id", "session_id", "item_id", "seconds", "event_kind", "at"] },
+  { table: "invoices", columns: ["id", "account_id", "source", "status", "payload_json", "created_at", "updated_at"] },
+  { table: "anchored_assets", columns: ["id", "label", "asset_type", "permanence", "role", "physics_role", "tick_rate_hz"] },
+  { table: "map_assets", columns: ["map_id", "anchor_asset_id", "digest", "verification_status", "metadata_json"] },
+  { table: "intelligence_network_keys", columns: ["id", "key_kind", "key_label", "anchor_asset_id", "status"] }
+];
+
+function assertSafeIdentifier(value){
+  if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)){
+    throw new Error(`unsafe_schema_identifier:${value}`);
+  }
+}
+
+function inspectRequiredSchema(){
+  const missing = [];
+
+  for(const requirement of REQUIRED_SCHEMA){
+    assertSafeIdentifier(requirement.table);
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(requirement.table);
+    if(!table){
+      missing.push({ table: requirement.table, missing: "table" });
+      continue;
+    }
+
+    const columns = db.prepare(`PRAGMA table_info(${requirement.table})`).all();
+    const existingColumns = new Set(columns.map(column => column.name));
+    for(const column of requirement.columns){
+      assertSafeIdentifier(column);
+      if(!existingColumns.has(column)){
+        missing.push({ table: requirement.table, column, missing: "column" });
+      }
+    }
+  }
+
+  const hasMigrationTable = !missing.some(item => item.table === "schema_migrations" && item.missing === "table");
+  const latestMigration = hasMigrationTable
+    ? db.prepare(`
+      SELECT version, description, applied_at
+      FROM schema_migrations
+      ORDER BY version DESC
+      LIMIT 1
+    `).get()
+    : null;
+
+  if(hasMigrationTable && !latestMigration){
+    missing.push({ table: "schema_migrations", missing: "applied_schema_version" });
+  }
+
+  return { ok: missing.length === 0, missing, latestMigration };
+}
+
+// --- health/readiness (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
+app.get("/ready", (req,res)=>{
+  const readiness = dbReady();
+  res.status(readiness.ok ? 200 : 503).json({ ...readiness, service:"synaptics-seconds-api", ts:new Date().toISOString() });
+});
+app.get("/metrics", (req,res)=>{
+  const readiness = dbReady();
+  res.type("text/plain; version=0.0.4").send([
+    "# HELP synaptics_metering_ready Database readiness, 1 when ready.",
+    "# TYPE synaptics_metering_ready gauge",
+    `synaptics_metering_ready ${readiness.ok ? 1 : 0}`,
+    ""
+  ].join("\n"));
+});
+
+app.get("/ready", (req,res,next)=>{
+  try{
+    const readiness = inspectRequiredSchema();
+    res.status(readiness.ok ? 200 : 503).json({
+      ok: readiness.ok,
+      service: "synaptics-seconds-api",
+      schema_version: readiness.latestMigration?.version ?? null,
+      schema_applied_at: readiness.latestMigration?.applied_at ?? null,
+      missing: readiness.missing,
+      ts: new Date().toISOString()
+    });
+  }catch(e){ next(e); }
+});
 
 app.get("/intelligence/anchors", (req,res)=>{
   res.json({
@@ -413,14 +569,18 @@ const ACCOUNT_ROLES = new Set(["user", "admin"]);
 app.get("/admin/project-search", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireScope(req, "project:read");
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     res.json(searchProjectFiles(req.query?.q));
   }catch(e){ next(e); }
 });
 
 app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const rows = db.prepare(`
       SELECT id, display_name, role, created_at, updated_at
       FROM accounts
@@ -432,7 +592,9 @@ app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
 
 app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:write");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
     if(!ACCOUNT_ROLES.has(role)){
       return res.status(400).json({ error: "invalid_role", allowed_roles: [...ACCOUNT_ROLES] });
@@ -442,6 +604,7 @@ app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
     if(!account) return res.status(404).json({ error: "account_not_found" });
 
     db.prepare("UPDATE accounts SET role=?, updated_at=datetime('now') WHERE id=?").run(role, req.params.id);
+    auditLog("admin_role_change", req, { target_account_id: req.params.id, previous_role: account.role, new_role: role });
     const updated = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
     res.json({ account: updated });
   }catch(e){ next(e); }
@@ -449,7 +612,9 @@ app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
 
 app.get("/admin/accounts/:id/identities", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const account = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
     if(!account) return res.status(404).json({ error: "account_not_found" });
 
@@ -465,7 +630,9 @@ app.get("/admin/accounts/:id/identities", requireApiKeyOrAccount, (req,res,next)
 
 app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const identities = db.prepare(`
       SELECT i.id, i.account_id, a.display_name, a.role, i.provider_name, i.provider_subject,
         i.email, i.email_verified, i.created_at, i.updated_at
@@ -481,7 +648,9 @@ app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
 app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireScope(req, "reports:read");
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const window = parseQuarterReportWindow(req.query);
 
     const usageByItem = db.prepare(`
@@ -605,7 +774,7 @@ app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
 // --- auth for everything else
 app.use((req,res,next)=>{ res.setHeader('X-Synaptics-Systems','seconds-metering-api'); next(); });
 app.use((req,res,next)=>{
-  if(req.path === "/health" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
+  if(req.path === "/health" || req.path === "/ready" || req.path === "/metrics" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
   return requireApiKeyOrAccount(req,res,next);
 });
 
@@ -675,6 +844,23 @@ function rejectForbiddenSession(res){
   return res.status(403).json({ error:"session_forbidden" });
 }
 
+function auditAdminApiKeyUse(req){
+  if(!req.apiKey?.id) return;
+  db.prepare(`
+    INSERT INTO api_key_audit_logs (id, api_key_id, route, method, scopes, account_id, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "aklog_" + nanoid(18),
+    req.apiKey.id,
+    req.originalUrl || req.url || "",
+    req.method || "",
+    JSON.stringify(req.auth?.scopes || []),
+    req.auth?.accountId || null,
+    req.ip || null,
+    req.get?.("user-agent") || null
+  );
+}
+
 function requireAdmin(req){
   if(req.apiKeyAuthenticated) return;
   if(req.authAccount?.role === "admin") return;
@@ -687,7 +873,7 @@ function requireAdmin(req){
 app.get("/catalog", (req,res,next)=>{
   try{
     requireScope(req, "catalog:read");
-    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
+    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by, effective_from, effective_to, version, active FROM catalog_items WHERE active = 1 ORDER BY id").all();
     res.json({ items: rows });
   }catch(e){ next(e); }
 });
@@ -696,6 +882,7 @@ app.post("/catalog/refresh", (req,res,next)=>{
   try{
     requireScope(req, "catalog:write");
     const rows = refreshCatalog(db);
+    auditLog("catalog_refresh", req, { item_count: rows.length });
     res.json({ ok:true, items: rows });
   }catch(e){ next(e); }
 });
@@ -732,7 +919,9 @@ app.get("/intelligence/state", (req,res,next)=>{
 app.post("/admin/intelligence/master-keys", (req,res,next)=>{
   try{
     requireScope(req, "intelligence:write");
+    requireScope(req, "admin:write");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const body = parseBody(MasterKeyBody, req.body);
     const key = upsertIntelligenceNetworkKey(db, {
       keyKind: "master_key",
@@ -742,6 +931,7 @@ app.post("/admin/intelligence/master-keys", (req,res,next)=>{
       anchorAssetId: body.anchor_asset_id,
       status: body.status
     });
+    auditLog("master_key_change", req, { key_label: key.key_label, key_kind: key.key_kind, status: key.status, anchor_asset_id: key.anchor_asset_id, account_id: key.account_id });
     res.status(201).json({ key });
   }catch(e){ next(e); }
 });
@@ -771,7 +961,7 @@ app.post("/sessions/:id/start", (req,res,next)=>{
     if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
-    const item = db.prepare("SELECT * FROM catalog_items WHERE id=?").get(body.item_id);
+    const item = db.prepare("SELECT * FROM catalog_items WHERE id=? AND active = 1").get(body.item_id);
     if(!item) return res.status(404).json({ error:"item_not_found" });
 
     // stop any current item (idempotent)
@@ -785,6 +975,56 @@ app.post("/sessions/:id/start", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+function heartbeatIdentityClause(body){
+  const clauses = [];
+  const params = [];
+  if(body.idempotency_key){
+    clauses.push("heartbeat_idempotency_key=?");
+    params.push(body.idempotency_key);
+  }
+  if(body.event_timestamp){
+    clauses.push("heartbeat_event_timestamp=?");
+    params.push(body.event_timestamp);
+  }
+  if(body.tick_sequence !== undefined){
+    clauses.push("heartbeat_tick_sequence=?");
+    params.push(body.tick_sequence);
+  }
+  if(clauses.length === 0) return null;
+  return { sql: clauses.map(c => `(${c})`).join(" OR "), params };
+}
+
+function existingHeartbeatResult(sessionId, body){
+  const identity = heartbeatIdentityClause(body);
+  if(!identity) return null;
+
+  const rows = db.prepare(`
+    SELECT id, item_id, seconds, event_kind, heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence
+    FROM usage_events
+    WHERE session_id=? AND (${identity.sql})
+    ORDER BY CASE event_kind WHEN 'live_tick' THEN 0 ELSE 1 END, at, id
+  `).all(sessionId, ...identity.params);
+
+  if(rows.length === 0) return null;
+  const liveSeconds = rows.filter(row => row.event_kind === "live_tick").reduce((sum, row) => sum + Number(row.seconds || 0), 0);
+  const recoveredSeconds = rows.filter(row => row.event_kind === "recovery_adjustment").reduce((sum, row) => sum + Number(row.seconds || 0), 0);
+  return {
+    ok:true,
+    duplicate:true,
+    added_seconds: liveSeconds + recoveredSeconds,
+    live_seconds: liveSeconds,
+    recovered_seconds: recoveredSeconds,
+    item_id: rows[0]?.item_id || null,
+    event_ids: rows.map(row => row.id),
+    identity: {
+      idempotency_key: rows.find(row => row.heartbeat_idempotency_key)?.heartbeat_idempotency_key || null,
+      event_timestamp: rows.find(row => row.heartbeat_event_timestamp)?.heartbeat_event_timestamp || null,
+      tick_sequence: rows.find(row => row.heartbeat_tick_sequence !== null && row.heartbeat_tick_sequence !== undefined)?.heartbeat_tick_sequence ?? null
+    },
+    intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
+  };
+}
+
 app.post("/sessions/:id/heartbeat", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
@@ -796,27 +1036,60 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
-    const liveEventId = "ev_" + nanoid(18);
-    db.prepare(`
-      INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
-      VALUES (?, ?, ?, ?, 'live_tick')
-    `).run(liveEventId, sessionId, sess.current_item_id, body.seconds);
+    const duplicate = existingHeartbeatResult(sessionId, body);
+    if(duplicate) return res.json(duplicate);
 
     const recoveredSeconds = body.recovered_seconds || 0;
+    const eventIds = [];
+    const insertEvent = db.prepare(`
+      INSERT INTO usage_events (
+        id, session_id, item_id, seconds, event_kind,
+        heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const liveEventId = "ev_" + nanoid(18);
+    insertEvent.run(
+      liveEventId,
+      sessionId,
+      sess.current_item_id,
+      body.seconds,
+      "live_tick",
+      body.idempotency_key ?? null,
+      body.event_timestamp ?? null,
+      body.tick_sequence ?? null
+    );
+    eventIds.push(liveEventId);
+
     if(recoveredSeconds > 0){
       const recoveryEventId = "ev_" + nanoid(18);
-      db.prepare(`
-        INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
-        VALUES (?, ?, ?, ?, 'recovery_adjustment')
-      `).run(recoveryEventId, sessionId, sess.current_item_id, recoveredSeconds);
+      insertEvent.run(
+        recoveryEventId,
+        sessionId,
+        sess.current_item_id,
+        recoveredSeconds,
+        "recovery_adjustment",
+        body.idempotency_key ?? null,
+        body.event_timestamp ?? null,
+        body.tick_sequence ?? null
+      );
+      eventIds.push(recoveryEventId);
     }
 
     res.json({
       ok:true,
+      duplicate:false,
       added_seconds: body.seconds + recoveredSeconds,
       live_seconds: body.seconds,
       recovered_seconds: recoveredSeconds,
       item_id: sess.current_item_id,
+      event_ids: eventIds,
+      identity: {
+        idempotency_key: body.idempotency_key ?? null,
+        event_timestamp: body.event_timestamp ?? null,
+        tick_sequence: body.tick_sequence ?? null
+      },
       intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
     });
   }catch(e){ next(e); }
@@ -852,6 +1125,7 @@ app.post("/sessions/:id/close", (req,res,next)=>{
       WHERE id=?
     `).run(sessionId);
 
+    auditLog("session_close", req, { session_id: sessionId, account_id: sess.account_id, seat_id: sess.seat_id });
     res.json({ ok:true, status:"closed" });
   }catch(e){ next(e); }
 });
@@ -889,9 +1163,17 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       quantity: l.quantity,
       quantity_unit: l.quantity_unit,
       auto_increment_by: l.auto_increment_by,
+      catalog_version: l.catalog_version,
+      catalog_effective_from: l.catalog_effective_from,
+      catalog_effective_to: l.catalog_effective_to,
+      price_snapshot: l.price_snapshot,
       unit_price_cents: l.unit_price.cents,
       line_total_cents: l.cost.cents
     })),
+    catalog: {
+      versions: summary.catalog_versions,
+      price_snapshot: summary.catalog_snapshot
+    },
     intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1", invoiceKey: `A1:${session_id}` }),
     network: {
       a1_box_key: `A1:${session_id}`,
@@ -909,13 +1191,16 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
   };
 
   const id = "inv_" + nanoid(18);
+  const catalogVersion = summary.catalog_versions.join(",") || null;
+  const catalogSnapshotJson = JSON.stringify(summary.catalog_snapshot);
+
   db.prepare(`
     INSERT INTO invoices (
       id, account_id, session_id, source, status, verification_method,
-      accepted_at, verified_at, payload_json
+      accepted_at, verified_at, payload_json, catalog_version, catalog_snapshot_json
     )
-    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?)
-  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice));
+    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?, ?, ?)
+  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice), catalogVersion, catalogSnapshotJson);
 
   const key = upsertIntelligenceNetworkKey(db, {
     keyKind: "invoice_key",
@@ -926,13 +1211,14 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     status: "confirmed"
   });
 
+  auditLog("invoice_creation", req, { invoice_id: id, session_id, account_id: req.authAccount.id, source: "generated", status: "accepted" });
   res.status(201).json({ id, invoice, key });
 });
 
 app.get("/invoices", requireAccount, (req,res)=>{
   const rows = db.prepare(`
     SELECT id, account_id, session_id, source, status, verification_method,
-      accepted_at, verified_at, created_at, updated_at, payload_json
+      accepted_at, verified_at, created_at, updated_at, catalog_version, catalog_snapshot_json, payload_json
     FROM invoices
     WHERE account_id=?
     ORDER BY created_at DESC, id DESC
@@ -950,6 +1236,8 @@ app.get("/invoices", requireAccount, (req,res)=>{
       verified_at: row.verified_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      catalog_version: row.catalog_version,
+      catalog_snapshot: row.catalog_snapshot_json ? JSON.parse(row.catalog_snapshot_json) : null,
       invoice: JSON.parse(row.payload_json)
     }))
   });
@@ -973,6 +1261,7 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
       ? (body.session_id ?? verification.checked?.sessionIds?.[0] ?? null)
       : null;
     const verificationComplete = status !== "pending";
+    const storedPayload = normalizedServerInvoicePayload(payload, verification);
 
     db.prepare(`
       INSERT INTO invoices (
@@ -995,10 +1284,11 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
       verificationMethod,
       verificationComplete ? 1 : 0,
       verification.accepted ? 1 : 0,
-      JSON.stringify(payload)
+      JSON.stringify(storedPayload)
     );
 
     const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);
+    auditLog("invoice_import", req, { invoice_id: id, account_id: req.authAccount.id, source: body.source, status, verification_reason: verification.reason });
     res.status(201).json({
       invoice,
       verification: {
@@ -1057,6 +1347,7 @@ app.post("/ndsp/telemetry", (req,res,next)=>{
 // --- error handler
 app.use((err, req, res, next)=>{
   const status = err?.status || 500;
+  logJson(status >= 500 ? "error" : "warn", "http_error", { request_id: req.id, method: req.method, path: req.originalUrl || req.url, status, error: err?.message || "server_error" });
   res.status(status).json({
     error: err?.message || "server_error",
     issues: err?.issues || undefined
