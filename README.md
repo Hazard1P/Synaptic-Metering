@@ -276,6 +276,34 @@ DATABASE_PATH=/mnt/data/app.db
 SQLITE_JOURNAL_MODE=DELETE
 ```
 
+## Production database tier
+
+The intended production database tier for small and single-tenant deployments is SQLite on a durable, encrypted persistent volume. Treat the SQLite file as production state: it contains metering sessions, usage events, account records, invoice data, and map authentication metadata.
+
+### SQLite production deployments
+
+- Set `DATABASE_PATH` to an explicit absolute path on a writable persistent volume, such as `/mnt/data/app.db`. Never use an ephemeral filesystem, container layer, read-only deployment bundle, or temporary directory for production `DATABASE_PATH`.
+- Require encryption at the host, disk, or volume layer for the filesystem that stores `DATABASE_PATH`. If the platform supports separate backup encryption settings, enable encrypted backups as well.
+- Restrict filesystem permissions so only the application runtime user and approved operators can read the database file and its parent directory.
+- Back up the database at least daily for production. For active billing deployments, prefer hourly snapshots or managed volume snapshots when supported by the host. Retain daily backups for at least 30 days and retain month-end backups for at least 12 months unless customer contracts or law require a longer period.
+- Document and run restore tests at least quarterly and after any backup-system change. A restore test must recover the SQLite database into an isolated environment, run migrations if needed, start the service against the restored `DATABASE_PATH`, and verify representative health, session summary, invoice/reporting, and map authentication reads. Record the backup identifier, restore timestamp, operator, verification result, and any follow-up actions.
+- When `SQLITE_JOURNAL_MODE=WAL`, treat `app.db`, `app.db-wal`, and `app.db-shm` as one backup unit. Quiesce the app or use a snapshot mechanism that captures all three files atomically; otherwise run a SQLite checkpoint before copying the database. Do not delete or exclude WAL sidecar files from volume snapshots or rsync-style backups.
+- Use `SQLITE_JOURNAL_MODE=DELETE` only on platforms that cannot persist or correctly lock WAL sidecar files, including many serverless volume mounts. Confirm that the platform preserves the main database file across cold starts and redeploys.
+- Plan capacity around SQLite's single-writer concurrency model. Multiple readers are supported, but write transactions serialize; high-frequency heartbeats, admin writes, invoice generation, and migrations can contend for the same writer lock. Keep write transactions short, run only one application instance that writes to the SQLite file unless the host explicitly supports safe shared SQLite locking, and monitor for `SQLITE_BUSY` or latency spikes.
+- Schedule migrations during a maintenance window or low-traffic period for production SQLite deployments because schema changes can block normal writes.
+
+### Migration path for larger customer deployments
+
+Move larger, multi-tenant, or high-write customer deployments from SQLite to PostgreSQL or another managed relational database when write contention, backup/restore requirements, compliance expectations, or horizontal scaling needs exceed the SQLite operating model. The target managed database should provide automated encrypted backups, point-in-time recovery, tested restore workflows, monitoring/alerting, connection pooling, and stronger concurrent write behavior than a single SQLite writer.
+
+A recommended migration path is:
+
+1. Select PostgreSQL or an equivalent managed relational service with encryption at rest, TLS in transit, automated backups, point-in-time recovery, and an operational restore-test process.
+2. Add a database adapter layer for application queries, then port migrations and schema definitions so SQLite and the managed relational backend can be validated in parallel during transition.
+3. Export a consistent SQLite snapshot, import it into the managed database, and reconcile row counts and representative records for sessions, usage events, accounts, invoices, and map assets.
+4. Run staging traffic and operational reports against the managed database, including concurrent heartbeat/write tests and recovery drills.
+5. Schedule a cutover window, pause writes or place the app in maintenance mode, perform a final export/import delta if needed, update `DATABASE_PATH`-specific configuration to the managed database connection settings, and keep the SQLite backup immutable until customer acceptance and rollback windows expire.
+
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
 - Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.
