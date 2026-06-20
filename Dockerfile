@@ -9,8 +9,10 @@ COPY src ./src
 COPY public ./public
 COPY templates ./templates
 COPY data ./data
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 ENV NODE_ENV=production
 EXPOSE 8080
 
-CMD ["sh", "-c", "node src/db/migrate.js && node src/server.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["npm", "start"]

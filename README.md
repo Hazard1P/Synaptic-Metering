@@ -42,10 +42,15 @@ export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
-docker compose up -d --build
+# Build the image, run exactly one idempotent migration job, then start the API.
+docker compose build api
+docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
+docker compose up -d
 ```
 
 `docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
+
+The migration command is safe to repeat on redeploys: `npm run migrate` uses idempotent SQLite DDL/data seeding patterns such as `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, column-existence checks before `ALTER TABLE`, and conflict-aware seed/upsert statements. In scaled deployments, run only one migration job per release before starting or replacing API replicas; keep `RUN_MIGRATIONS=false` on compose-managed API containers so multiple replicas do not attempt migrations concurrently. For a single ad-hoc container only, `RUN_MIGRATIONS=true docker compose up -d` runs `npm run migrate` in the entrypoint before `npm start`.
 
 ---
 
@@ -298,7 +303,7 @@ After starting the server, open:
 ## Server Notes / Fixes Applied
 - Removed packaged `node_modules` from the deliverable. Reinstall dependencies on the target machine so native modules like `better-sqlite3` compile for that OS/CPU.
 - Docker build now copies `public/`, `templates/`, and `data/`.
-- Container startup now runs migrations before starting the API.
+- Docker images include an entrypoint that can run migrations before `npm start` when `RUN_MIGRATIONS=true`; compose deployments should normally use the documented one-shot `docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate` workflow instead.
 - Added `.dockerignore` to keep the image clean.
 
 ## Clean Local Server Start
@@ -319,10 +324,12 @@ export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
-docker compose up -d --build
+docker compose build api
+docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
+docker compose up -d
 ```
 
-`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
+`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file. Run the one-shot migration command once per release before `docker compose up -d`; do not enable per-container migrations when running multiple replicas.
 
 If you see an `invalid ELF header` error, the project was copied with `node_modules` built on a different machine (for example macOS -> Linux). Delete `node_modules` and reinstall on the target server.
 
