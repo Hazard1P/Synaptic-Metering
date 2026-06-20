@@ -29,6 +29,7 @@ Test:
 
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
@@ -47,6 +48,20 @@ docker compose up -d --build
 
 `docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
 
+### Deployment sequence and migrations
+
+Run database migrations before the API accepts traffic:
+
+```bash
+npm ci --omit=dev
+npm run migrate
+npm start
+```
+
+`npm run migrate` creates or updates the required SQLite tables and records the applied schema version in `schema_migrations`. `npm start` should run only after that command exits successfully. Configure load balancers, orchestrators, and uptime checks to use `GET /ready` instead of `/health` for traffic readiness; `/ready` returns `503` until required tables, columns, and an applied schema version are present.
+
+For container deployments, this repository's `Dockerfile` runs `node src/db/migrate.js && node src/server.js` so a single-container deployment migrates the mounted SQLite database before starting the API process. In multi-replica or rolling deployments, prefer a release job/init job that runs `npm run migrate` once against the shared database, then start API containers with `npm start` and gate traffic on `/ready`.
+
 ---
 
 ## Main Endpoints (API)
@@ -63,6 +78,7 @@ The public `/` page is an account entry point for SynapticSystems.ca visitors. K
 
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
@@ -323,6 +339,20 @@ docker compose up -d --build
 ```
 
 `docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
+
+### Deployment sequence and migrations
+
+Run database migrations before the API accepts traffic:
+
+```bash
+npm ci --omit=dev
+npm run migrate
+npm start
+```
+
+`npm run migrate` creates or updates the required SQLite tables and records the applied schema version in `schema_migrations`. `npm start` should run only after that command exits successfully. Configure load balancers, orchestrators, and uptime checks to use `GET /ready` instead of `/health` for traffic readiness; `/ready` returns `503` until required tables, columns, and an applied schema version are present.
+
+For container deployments, this repository's `Dockerfile` runs `node src/db/migrate.js && node src/server.js` so a single-container deployment migrates the mounted SQLite database before starting the API process. In multi-replica or rolling deployments, prefer a release job/init job that runs `npm run migrate` once against the shared database, then start API containers with `npm start` and gate traffic on `/ready`.
 
 If you see an `invalid ELF header` error, the project was copied with `node_modules` built on a different machine (for example macOS -> Linux). Delete `node_modules` and reinstall on the target server.
 

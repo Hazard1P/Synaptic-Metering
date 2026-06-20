@@ -5,6 +5,8 @@ if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
 }
 
+const SCHEMA_VERSION = 1;
+
 const db = openDb();
 
 function hasColumn(tableName, columnName){
@@ -13,6 +15,12 @@ function hasColumn(tableName, columnName){
 }
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  description TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS catalog_items (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,
@@ -292,5 +300,13 @@ for (const [name, ddl] of catalogColumns){
   }
 }
 
-console.log("Migration complete. SQLite at-rest decision:", DB_AT_REST_SECURITY.approach);
+db.prepare(`
+  INSERT INTO schema_migrations (version, description, applied_at)
+  VALUES (?, ?, datetime('now'))
+  ON CONFLICT(version) DO UPDATE SET
+    description = excluded.description,
+    applied_at = excluded.applied_at
+`).run(SCHEMA_VERSION, 'baseline application schema');
+
+console.log(`Migration complete. Applied schema version: ${SCHEMA_VERSION}. SQLite at-rest decision:`, DB_AT_REST_SECURITY.approach);
 db.close();
