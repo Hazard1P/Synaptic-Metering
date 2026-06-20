@@ -6,6 +6,8 @@ if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
 }
 
+const SCHEMA_VERSION = 1;
+
 const db = openDb();
 
 function hasColumn(tableName, columnName){
@@ -14,6 +16,12 @@ function hasColumn(tableName, columnName){
 }
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  description TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS catalog_items (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,

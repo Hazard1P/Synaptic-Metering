@@ -389,7 +389,65 @@ app.get("/genesis", (req,res)=>{
   res.status(404).type("text").send("Genesis page not found");
 });
 
-// --- health (public)
+const REQUIRED_SCHEMA = [
+  { table: "schema_migrations", columns: ["version", "description", "applied_at"] },
+  { table: "accounts", columns: ["id", "role", "created_at", "updated_at"] },
+  { table: "account_identities", columns: ["id", "account_id", "provider_name", "provider_subject"] },
+  { table: "auth_sessions", columns: ["id", "account_id", "expires_at"] },
+  { table: "catalog_items", columns: ["id", "label", "unit_price_cents", "currency", "default_qty", "unit_name", "quantity_mode", "auto_increment_by"] },
+  { table: "sessions", columns: ["id", "account_id", "seat_id", "status"] },
+  { table: "usage_events", columns: ["id", "session_id", "item_id", "seconds", "event_kind", "at"] },
+  { table: "invoices", columns: ["id", "account_id", "source", "status", "payload_json", "created_at", "updated_at"] },
+  { table: "anchored_assets", columns: ["id", "label", "asset_type", "permanence", "role", "physics_role", "tick_rate_hz"] },
+  { table: "map_assets", columns: ["map_id", "anchor_asset_id", "digest", "verification_status", "metadata_json"] },
+  { table: "intelligence_network_keys", columns: ["id", "key_kind", "key_label", "anchor_asset_id", "status"] }
+];
+
+function assertSafeIdentifier(value){
+  if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)){
+    throw new Error(`unsafe_schema_identifier:${value}`);
+  }
+}
+
+function inspectRequiredSchema(){
+  const missing = [];
+
+  for(const requirement of REQUIRED_SCHEMA){
+    assertSafeIdentifier(requirement.table);
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(requirement.table);
+    if(!table){
+      missing.push({ table: requirement.table, missing: "table" });
+      continue;
+    }
+
+    const columns = db.prepare(`PRAGMA table_info(${requirement.table})`).all();
+    const existingColumns = new Set(columns.map(column => column.name));
+    for(const column of requirement.columns){
+      assertSafeIdentifier(column);
+      if(!existingColumns.has(column)){
+        missing.push({ table: requirement.table, column, missing: "column" });
+      }
+    }
+  }
+
+  const hasMigrationTable = !missing.some(item => item.table === "schema_migrations" && item.missing === "table");
+  const latestMigration = hasMigrationTable
+    ? db.prepare(`
+      SELECT version, description, applied_at
+      FROM schema_migrations
+      ORDER BY version DESC
+      LIMIT 1
+    `).get()
+    : null;
+
+  if(hasMigrationTable && !latestMigration){
+    missing.push({ table: "schema_migrations", missing: "applied_schema_version" });
+  }
+
+  return { ok: missing.length === 0, missing, latestMigration };
+}
+
+// --- health/readiness (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
 app.get("/ready", (req,res)=>{
   const readiness = dbReady();
@@ -403,6 +461,20 @@ app.get("/metrics", (req,res)=>{
     `synaptics_metering_ready ${readiness.ok ? 1 : 0}`,
     ""
   ].join("\n"));
+});
+
+app.get("/ready", (req,res,next)=>{
+  try{
+    const readiness = inspectRequiredSchema();
+    res.status(readiness.ok ? 200 : 503).json({
+      ok: readiness.ok,
+      service: "synaptics-seconds-api",
+      schema_version: readiness.latestMigration?.version ?? null,
+      schema_applied_at: readiness.latestMigration?.applied_at ?? null,
+      missing: readiness.missing,
+      ts: new Date().toISOString()
+    });
+  }catch(e){ next(e); }
 });
 
 app.get("/intelligence/anchors", (req,res)=>{
