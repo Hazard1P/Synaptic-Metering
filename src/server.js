@@ -903,6 +903,56 @@ app.post("/sessions/:id/start", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+function heartbeatIdentityClause(body){
+  const clauses = [];
+  const params = [];
+  if(body.idempotency_key){
+    clauses.push("heartbeat_idempotency_key=?");
+    params.push(body.idempotency_key);
+  }
+  if(body.event_timestamp){
+    clauses.push("heartbeat_event_timestamp=?");
+    params.push(body.event_timestamp);
+  }
+  if(body.tick_sequence !== undefined){
+    clauses.push("heartbeat_tick_sequence=?");
+    params.push(body.tick_sequence);
+  }
+  if(clauses.length === 0) return null;
+  return { sql: clauses.map(c => `(${c})`).join(" OR "), params };
+}
+
+function existingHeartbeatResult(sessionId, body){
+  const identity = heartbeatIdentityClause(body);
+  if(!identity) return null;
+
+  const rows = db.prepare(`
+    SELECT id, item_id, seconds, event_kind, heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence
+    FROM usage_events
+    WHERE session_id=? AND (${identity.sql})
+    ORDER BY CASE event_kind WHEN 'live_tick' THEN 0 ELSE 1 END, at, id
+  `).all(sessionId, ...identity.params);
+
+  if(rows.length === 0) return null;
+  const liveSeconds = rows.filter(row => row.event_kind === "live_tick").reduce((sum, row) => sum + Number(row.seconds || 0), 0);
+  const recoveredSeconds = rows.filter(row => row.event_kind === "recovery_adjustment").reduce((sum, row) => sum + Number(row.seconds || 0), 0);
+  return {
+    ok:true,
+    duplicate:true,
+    added_seconds: liveSeconds + recoveredSeconds,
+    live_seconds: liveSeconds,
+    recovered_seconds: recoveredSeconds,
+    item_id: rows[0]?.item_id || null,
+    event_ids: rows.map(row => row.id),
+    identity: {
+      idempotency_key: rows.find(row => row.heartbeat_idempotency_key)?.heartbeat_idempotency_key || null,
+      event_timestamp: rows.find(row => row.heartbeat_event_timestamp)?.heartbeat_event_timestamp || null,
+      tick_sequence: rows.find(row => row.heartbeat_tick_sequence !== null && row.heartbeat_tick_sequence !== undefined)?.heartbeat_tick_sequence ?? null
+    },
+    intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
+  };
+}
+
 app.post("/sessions/:id/heartbeat", (req,res,next)=>{
   try{
     const sessionId = req.params.id;
@@ -914,27 +964,60 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
     if(!sess.current_item_id) return res.status(409).json({ error:"no_active_item" });
 
-    const liveEventId = "ev_" + nanoid(18);
-    db.prepare(`
-      INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
-      VALUES (?, ?, ?, ?, 'live_tick')
-    `).run(liveEventId, sessionId, sess.current_item_id, body.seconds);
+    const duplicate = existingHeartbeatResult(sessionId, body);
+    if(duplicate) return res.json(duplicate);
 
     const recoveredSeconds = body.recovered_seconds || 0;
+    const eventIds = [];
+    const insertEvent = db.prepare(`
+      INSERT INTO usage_events (
+        id, session_id, item_id, seconds, event_kind,
+        heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const liveEventId = "ev_" + nanoid(18);
+    insertEvent.run(
+      liveEventId,
+      sessionId,
+      sess.current_item_id,
+      body.seconds,
+      "live_tick",
+      body.idempotency_key ?? null,
+      body.event_timestamp ?? null,
+      body.tick_sequence ?? null
+    );
+    eventIds.push(liveEventId);
+
     if(recoveredSeconds > 0){
       const recoveryEventId = "ev_" + nanoid(18);
-      db.prepare(`
-        INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind)
-        VALUES (?, ?, ?, ?, 'recovery_adjustment')
-      `).run(recoveryEventId, sessionId, sess.current_item_id, recoveredSeconds);
+      insertEvent.run(
+        recoveryEventId,
+        sessionId,
+        sess.current_item_id,
+        recoveredSeconds,
+        "recovery_adjustment",
+        body.idempotency_key ?? null,
+        body.event_timestamp ?? null,
+        body.tick_sequence ?? null
+      );
+      eventIds.push(recoveryEventId);
     }
 
     res.json({
       ok:true,
+      duplicate:false,
       added_seconds: body.seconds + recoveredSeconds,
       live_seconds: body.seconds,
       recovered_seconds: recoveredSeconds,
       item_id: sess.current_item_id,
+      event_ids: eventIds,
+      identity: {
+        idempotency_key: body.idempotency_key ?? null,
+        event_timestamp: body.event_timestamp ?? null,
+        tick_sequence: body.tick_sequence ?? null
+      },
       intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
     });
   }catch(e){ next(e); }

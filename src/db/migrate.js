@@ -193,9 +193,13 @@ CREATE TABLE IF NOT EXISTS usage_events (
   item_id TEXT NOT NULL,
   seconds INTEGER NOT NULL,
   event_kind TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment')),
+  heartbeat_idempotency_key TEXT,
+  heartbeat_event_timestamp TEXT,
+  heartbeat_tick_sequence INTEGER,
   at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
 
 
 CREATE TABLE IF NOT EXISTS invoices (
@@ -262,13 +266,34 @@ CREATE INDEX IF NOT EXISTS idx_invoices_session_id
 
 
 const usageEventColumns = [
-  ["event_kind", "TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment'))"]
+  ["event_kind", "TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment'))"],
+  ["heartbeat_idempotency_key", "TEXT"],
+  ["heartbeat_event_timestamp", "TEXT"],
+  ["heartbeat_tick_sequence", "INTEGER"]
 ];
 for (const [name, ddl] of usageEventColumns){
   if(!hasColumn('usage_events', name)){
     db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_idempotency_key
+  ON usage_events(session_id, event_kind, heartbeat_idempotency_key)
+  WHERE heartbeat_idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_event_timestamp
+  ON usage_events(session_id, event_kind, heartbeat_event_timestamp)
+  WHERE heartbeat_event_timestamp IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_tick_sequence
+  ON usage_events(session_id, event_kind, heartbeat_tick_sequence)
+  WHERE heartbeat_tick_sequence IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_session_identity
+  ON usage_events(session_id, heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence);
+`);
 
 const accountColumns = [
   ["role", "TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))"]
