@@ -1,0 +1,18 @@
+{
+  "catalog_version": "2026.01.28",
+  "effective_from": "2026-01-28T00:00:00.000Z",
+  "effective_to": null,
+  "currency": "CAD",
+  "signature": null,
+  "items": [
+    { "id": "second_s_of_life_death_relative_to_ai", "label": "<[Second's_Of_Life|Death_Relative_to_[AI]]>", "unit_price_cents": 1, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_decision_making_a_a25_j9j7_10_q3k86_10_k_10_2ka27_jq843_10_j444858796_q66a539_723_amen", "label": "<[Second's_Of_Decision_Making]><[A|A25|J9J7|10|Q3K86|10|K|10|2KA27|JQ843|10|J444858796|Q66A539|723]:[AMEN]>>", "unit_price_cents": 1, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_reasoning_422_10_464_v_10_63j_10_q45775_10_q89_a_76kq39_aqakj_8_a2286538_73j5k9j9_amen", "label": "<[Second's_Of_Reasoning]><[422|10|464|V|10|63J|10|Q45775|10|Q89|A|76KQ39|AQAKJ|8|A2286538|73J5K9J9]:[AMEN]>", "unit_price_cents": 1, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_thinking", "label": "<[Second's_Of_Thinking]><[]>", "unit_price_cents": 0, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_thought", "label": "<[Second's_Of_Thought]><[]>", "unit_price_cents": 0, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_dream_stasus", "label": "<[Second's_Of_Dream_Stasus]><[]>", "unit_price_cents": 0, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_privacy", "label": "<[Second's_Of_Privacy]><[]>", "unit_price_cents": 0, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "second_s_of_prayer_entropy", "label": "<[Second's_Of_Prayer:[Entropy]]><[]>", "unit_price_cents": 1, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true },
+    { "id": "synaptic_systems_ai_systems", "label": "<[Synaptic.Systems]>:<[AI-Systems]>", "unit_price_cents": 100, "default_qty": 1, "unit_name": "second", "quantity_mode": "seconds", "auto_increment_by": 1, "active": true }
+  ]
+}

@@ -1,5 +1,6 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
 import { seedMapAssetDigests } from "../lib/mapAuthentication.js";
+import { refreshCatalog } from "../lib/catalog.js";
 
 if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
@@ -26,7 +27,11 @@ CREATE TABLE IF NOT EXISTS catalog_items (
   label TEXT NOT NULL,
   unit_price_cents INTEGER NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CAD',
-  source TEXT NOT NULL DEFAULT 'invoice',
+  source TEXT NOT NULL DEFAULT 'catalog_json',
+  effective_from TEXT,
+  effective_to TEXT,
+  version TEXT NOT NULL DEFAULT 'legacy',
+  active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -83,6 +88,40 @@ CREATE TABLE IF NOT EXISTS account_business_associations (
 
 CREATE INDEX IF NOT EXISTS idx_account_business_associations_account_id
   ON account_business_associations(account_id);
+
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  key_digest TEXT NOT NULL CHECK(length(key_digest) = 64),
+  label TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT,
+  revoked_at TEXT,
+  last_used_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_digest
+  ON api_keys(key_digest);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_active
+  ON api_keys(revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS api_key_audit_logs (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  method TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  account_id TEXT,
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_audit_logs_api_key_id_created_at
+  ON api_key_audit_logs(api_key_id, created_at);
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id TEXT PRIMARY KEY,
@@ -162,9 +201,13 @@ CREATE TABLE IF NOT EXISTS usage_events (
   item_id TEXT NOT NULL,
   seconds INTEGER NOT NULL,
   event_kind TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment')),
+  heartbeat_idempotency_key TEXT,
+  heartbeat_event_timestamp TEXT,
+  heartbeat_tick_sequence INTEGER,
   at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
 
 
 CREATE TABLE IF NOT EXISTS invoices (
@@ -178,6 +221,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   verified_at TEXT,
   accepted_at TEXT,
   payload_json TEXT NOT NULL,
+  catalog_version TEXT,
+  catalog_snapshot_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -212,6 +257,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   accepted_at TEXT,
   verified_at TEXT,
   payload_json TEXT NOT NULL,
+  catalog_version TEXT,
+  catalog_snapshot_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -227,13 +274,34 @@ CREATE INDEX IF NOT EXISTS idx_invoices_session_id
 
 
 const usageEventColumns = [
-  ["event_kind", "TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment'))"]
+  ["event_kind", "TEXT NOT NULL DEFAULT 'live_tick' CHECK(event_kind IN ('live_tick', 'recovery_adjustment'))"],
+  ["heartbeat_idempotency_key", "TEXT"],
+  ["heartbeat_event_timestamp", "TEXT"],
+  ["heartbeat_tick_sequence", "INTEGER"]
 ];
 for (const [name, ddl] of usageEventColumns){
   if(!hasColumn('usage_events', name)){
     db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_idempotency_key
+  ON usage_events(session_id, event_kind, heartbeat_idempotency_key)
+  WHERE heartbeat_idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_event_timestamp
+  ON usage_events(session_id, event_kind, heartbeat_event_timestamp)
+  WHERE heartbeat_event_timestamp IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_session_tick_sequence
+  ON usage_events(session_id, event_kind, heartbeat_tick_sequence)
+  WHERE heartbeat_tick_sequence IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_session_identity
+  ON usage_events(session_id, heartbeat_idempotency_key, heartbeat_event_timestamp, heartbeat_tick_sequence);
+`);
 
 const accountColumns = [
   ["role", "TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin'))"]
@@ -243,6 +311,30 @@ for (const [name, ddl] of accountColumns){
     db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+
+const seedApiKeyDigests = (process.env.API_KEY_DIGESTS || "")
+  .split(",")
+  .map(digest => digest.trim().toLowerCase())
+  .filter(digest => /^[a-f0-9]{64}$/.test(digest));
+const seedApiKeyScopes = (process.env.API_KEY_SCOPES || "catalog:read,sessions:write,telemetry:write,intelligence:read")
+  .split(",")
+  .map(scope => scope.trim())
+  .filter(Boolean);
+seedApiKeyDigests.forEach((digest, index) => {
+  db.prepare(`
+    INSERT INTO api_keys (id, key_digest, label, scopes, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(key_digest) DO UPDATE SET
+      scopes=excluded.scopes,
+      label=excluded.label
+  `).run(
+    `api_key_env_${index + 1}`,
+    digest,
+    `Environment API key ${index + 1}`,
+    JSON.stringify(seedApiKeyScopes)
+  );
+});
 
 if(process.env.ADMIN_ACCOUNT_ID){
   db.prepare(`
@@ -287,12 +379,25 @@ db.prepare(`
 );
 
 seedMapAssetDigests(db);
+const invoiceColumns = [
+  ["catalog_version", "TEXT"],
+  ["catalog_snapshot_json", "TEXT"]
+];
+for (const [name, ddl] of invoiceColumns){
+  if(!hasColumn('invoices', name)){
+    db.exec(`ALTER TABLE invoices ADD COLUMN ${name} ${ddl}`);
+  }
+}
 
 const catalogColumns = [
   ["default_qty", "INTEGER NOT NULL DEFAULT 0"],
   ["unit_name", "TEXT NOT NULL DEFAULT 'second'"],
   ["quantity_mode", "TEXT NOT NULL DEFAULT 'seconds'"],
-  ["auto_increment_by", "INTEGER NOT NULL DEFAULT 1"]
+  ["auto_increment_by", "INTEGER NOT NULL DEFAULT 1"],
+  ["effective_from", "TEXT"],
+  ["effective_to", "TEXT"],
+  ["version", "TEXT NOT NULL DEFAULT 'legacy'"],
+  ["active", "INTEGER NOT NULL DEFAULT 1"]
 ];
 for (const [name, ddl] of catalogColumns){
   if(!hasColumn('catalog_items', name)){
@@ -300,13 +405,7 @@ for (const [name, ddl] of catalogColumns){
   }
 }
 
-db.prepare(`
-  INSERT INTO schema_migrations (version, description, applied_at)
-  VALUES (?, ?, datetime('now'))
-  ON CONFLICT(version) DO UPDATE SET
-    description = excluded.description,
-    applied_at = excluded.applied_at
-`).run(SCHEMA_VERSION, 'baseline application schema');
+refreshCatalog(db);
 
-console.log(`Migration complete. Applied schema version: ${SCHEMA_VERSION}. SQLite at-rest decision:`, DB_AT_REST_SECURITY.approach);
+console.log("Migration complete. SQLite at-rest decision:", DB_AT_REST_SECURITY.approach);
 db.close();
