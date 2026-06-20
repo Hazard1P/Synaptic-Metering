@@ -1,5 +1,6 @@
 import { createCipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
+import { openDb } from "../db/db.js";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "syn_meter_session";
 const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
@@ -19,11 +20,29 @@ function verifiedGoogleEmail(claims){
   return email && emailVerified ? email : "";
 }
 
-function parseDigests(value){
-  return (value || "")
-    .split(",")
-    .map(s => s.trim().toLowerCase())
-    .filter(Boolean);
+function parseJsonScopes(value){
+  if(Array.isArray(value)) return value.map(String).map(s => s.trim()).filter(Boolean);
+  try{
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.map(String).map(s => s.trim()).filter(Boolean) : [];
+  }catch{
+    return String(value || "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+}
+
+let apiKeyDb;
+
+function getApiKeyDb(){
+  if(apiKeyDb) return apiKeyDb;
+  apiKeyDb = openDb();
+  return apiKeyDb;
+}
+
+export function configureApiKeyAuth(db){
+  apiKeyDb = db;
 }
 
 function sha256Hex(value){
@@ -202,26 +221,41 @@ function encryptToken(value){
 }
 
 export function requireApiKey(req, res, next){
-  const digests = parseDigests(process.env.API_KEY_DIGESTS);
-  if(digests.length === 0){
-    // safe default: if not configured, deny. Raw API_KEYS are intentionally ignored.
-    return res.status(503).json({ error: "API_KEY_DIGESTS not configured" });
-  }
+  try{
+    const provided = req.header("x-api-key") || "";
+    if(!provided){
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-  const provided = req.header("x-api-key") || "";
-  if(!provided){
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+    const providedDigest = sha256Hex(provided);
+    const row = getApiKeyDb().prepare(`
+      SELECT id, key_digest, label, scopes, created_at, expires_at, revoked_at, last_used_at
+      FROM api_keys
+      WHERE key_digest=?
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > datetime('now'))
+    `).get(providedDigest);
 
-  const providedDigest = sha256Hex(provided);
-  const authorized = digests.some(expectedDigest => digestMatches(providedDigest, expectedDigest));
-  if(!authorized){
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+    if(!row || !digestMatches(providedDigest, row.key_digest)){
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-  req.apiKeyAuthenticated = true;
-  req.auth = { accountId: "api-key", scopes: ["*"] };
-  next();
+    const scopes = parseJsonScopes(row.scopes);
+    getApiKeyDb().prepare("UPDATE api_keys SET last_used_at=datetime('now') WHERE id=?").run(row.id);
+
+    req.apiKeyAuthenticated = true;
+    req.apiKey = {
+      id: row.id,
+      label: row.label,
+      scopes,
+      created_at: row.created_at,
+      expires_at: row.expires_at,
+      revoked_at: row.revoked_at,
+      last_used_at: row.last_used_at
+    };
+    req.auth = { accountId: `api-key:${row.id}`, scopes };
+    next();
+  }catch(e){ next(e); }
 }
 
 export function requireApiKeyOrAccount(req, res, next){

@@ -20,6 +20,7 @@ cd synaptics-seconds-api
 npm i
 export API_KEY=dev-key-1
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=http://localhost:8080
 npm run migrate
 npm run dev
@@ -29,6 +30,7 @@ Test:
 
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
@@ -39,13 +41,19 @@ curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```bash
 export API_KEY='replace-with-a-generated-secret'
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
-docker compose up -d --build
+# Build the image, run exactly one idempotent migration job, then start the API.
+docker compose build api
+docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
+docker compose up -d
 ```
 
 `docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
+
+The migration command is safe to repeat on redeploys: `npm run migrate` uses idempotent SQLite DDL/data seeding patterns such as `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, column-existence checks before `ALTER TABLE`, and conflict-aware seed/upsert statements. In scaled deployments, run only one migration job per release before starting or replacing API replicas; keep `RUN_MIGRATIONS=false` on compose-managed API containers so multiple replicas do not attempt migrations concurrently. For a single ad-hoc container only, `RUN_MIGRATIONS=true docker compose up -d` runs `npm run migrate` in the entrypoint before `npm start`.
 
 ---
 
@@ -54,8 +62,10 @@ docker compose up -d --build
 ### Auth
 Non-public API endpoints require one of:
 
-- `x-api-key: <key>` header. Store only comma-separated SHA-256 key digests in `API_KEY_DIGESTS`; do not store raw API keys in environment variables or config files.
+- `x-api-key: <key>` header. Store only SHA-256 key digests in the `api_keys.key_digest` database column; do not store raw API keys in environment variables or config files. `npm run migrate` can seed comma-separated `API_KEY_DIGESTS` into `api_keys` with scopes from comma-separated `API_KEY_SCOPES`.
 - A logged-in account session cookie created through `GET /auth/google/start`. Visitor-facing web pages should prefer this account flow; API keys are for administrative and integration clients.
+
+API-key scopes are loaded from SQLite (`api_keys.scopes`) for every request. Admin routes require explicit admin scopes: read-only admin routes require `admin:read`, write routes require `admin:write`, quarterly reports also require `reports:read`, and project search also requires `project:read`. API-key use of admin routes is recorded in `api_key_audit_logs` with key id, route, method, scopes, account id, IP address, user agent, and timestamp; `api_keys.last_used_at` is updated on successful authentication.
 
 ### Developer API-key examples
 
@@ -63,18 +73,19 @@ The public `/` page is an account entry point for SynapticSystems.ca visitors. K
 
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
 ### Admin database
-All `/admin/*` routes require an admin account session or a trusted API key. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers are treated as trusted administrative/integration clients.
+All `/admin/*` routes require an admin account session or an API key with explicit admin scopes. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers must have `admin:read` or `admin:write` as appropriate, plus route-specific scopes such as `reports:read` or `project:read`.
 
 - `GET /admin/accounts` — list internal accounts and roles.
 - `PATCH /admin/accounts/:id/role` — promote or demote an account by setting `role` in the JSON body to one of the existing `accounts.role` values: `user` or `admin`.
 - `GET /admin/accounts/:id/identities` — view the OAuth identities linked to one account for support/admin workflows. The response includes identity metadata such as provider, provider subject, email, verification status, and timestamps, but excludes OAuth access and refresh token data.
 - `GET /admin/account-identities` — view linked OAuth identity metadata across all accounts for support/admin workflows, also excluding OAuth access and refresh token data.
-- `GET /admin/reports/quarterly?year=YYYY&quarter=1-4` — generate a private quarterly admin report. Requires an admin account session or trusted API key plus the `reports:read` scope when scopes are enforced. The report aggregates `usage_events`, `sessions`, `catalog_items`, and `invoices` for the requested UTC quarter and returns metered seconds, invoice quantity, subtotal/total cents, sessions by account, invoice counts by status, and map/intelligence anchor IDs or network keys present in invoice payloads. Do not expose this response through public routes because it can include account and internal business metadata.
-- `GET /admin/project-search?q=<term>` — search repository-owned source and documentation files from the operator console or API. Requires an admin account session or trusted API key plus the `project:read` scope when scopes are enforced. Queries are Unicode-normalized, trimmed, whitespace-collapsed, matched literally/case-insensitively, and must be at least 2 characters. Responses include `query`, `count`, `truncated`, `limits`, `stats`, and `results[]` objects with `path`, `line`, and a short matched `excerpt`. Results are capped at 50 matches and files over 512 KiB are skipped. The searcher excludes dependency/generated/private locations and file types, including `node_modules`, `.git`, `.cache`, `coverage`, `dist`, `build`, `tmp`, `logs`, SQLite/database files, logs, archives, binary images/PDFs, keys/certificates, lockfiles, and secret environment files such as `.env*`.
+- `GET /admin/reports/quarterly?year=YYYY&quarter=1-4` — generate a private quarterly admin report. Requires an admin account session or an API key with both `admin:read` and `reports:read`. The report aggregates `usage_events`, `sessions`, `catalog_items`, and `invoices` for the requested UTC quarter and returns metered seconds, invoice quantity, subtotal/total cents, sessions by account, invoice counts by status, and map/intelligence anchor IDs or network keys present in invoice payloads. Do not expose this response through public routes because it can include account and internal business metadata.
+- `GET /admin/project-search?q=<term>` — search repository-owned source and documentation files from the operator console or API. Requires an admin account session or an API key with both `admin:read` and `project:read`. Queries are Unicode-normalized, trimmed, whitespace-collapsed, matched literally/case-insensitively, and must be at least 2 characters. Responses include `query`, `count`, `truncated`, `limits`, `stats`, and `results[]` objects with `path`, `line`, and a short matched `excerpt`. Results are capped at 50 matches and files over 512 KiB are skipped. The searcher excludes dependency/generated/private locations and file types, including `node_modules`, `.git`, `.cache`, `coverage`, `dist`, `build`, `tmp`, `logs`, SQLite/database files, logs, archives, binary images/PDFs, keys/certificates, lockfiles, and secret environment files such as `.env*`.
 
 Example quarterly report:
 
@@ -105,6 +116,36 @@ Seed or promote a local admin account during migration with:
 ```bash
 ADMIN_ACCOUNT_ID=acct_admin ADMIN_DISPLAY_NAME="Synaptics Admin" npm run migrate
 ```
+
+### API-key rotation and revocation
+
+API keys are stored by digest only in the `api_keys` table. The raw secret is shown only when you generate it; keep it in your deployment secret manager and send it with the `x-api-key` header. Suggested rotation flow:
+
+1. Generate a new high-entropy raw key and calculate its SHA-256 digest.
+2. Insert the new digest with the exact scopes it needs, for example:
+
+   ```sql
+   INSERT INTO api_keys (id, key_digest, label, scopes, expires_at)
+   VALUES (
+     'api_key_ops_2026_q3',
+     '<sha256-hex-digest>',
+     'Operations key 2026 Q3',
+     '["admin:read","reports:read","project:read"]',
+     '2026-09-30T23:59:59Z'
+   );
+   ```
+
+3. Deploy clients with the new raw key while keeping the old key active during the overlap window.
+4. Confirm `api_keys.last_used_at` advances for the new key and no critical client still uses the old key.
+5. Revoke the old key by setting `revoked_at`, for example:
+
+   ```sql
+   UPDATE api_keys
+   SET revoked_at = datetime('now')
+   WHERE id = 'api_key_ops_2026_q2';
+   ```
+
+Use `expires_at` for planned retirement and `revoked_at` for immediate shutdown. Review `api_key_audit_logs` during and after rotation to confirm which admin routes were accessed by each key.
 
 ### Anchored Intelligence
 - `GET /intelligence/anchors` — public description of the permanent anchored asset map used for 1 tick/second intelligence metering.
@@ -288,6 +329,33 @@ STORAGE_ENCRYPTION_PROVIDER=<serverless-encrypted-volume-control>
 STORAGE_ENCRYPTION_EVIDENCE=<provider-doc-runbook-or-ticket>
 ```
 
+
+## Observability and alerts
+
+Every response includes an `X-Request-ID` header. Clients may provide `X-Request-ID` or `X-Correlation-ID`; otherwise the API generates a `req_...` identifier. JSON error responses include the same `request_id` so platform logs, client reports, and support tickets can be correlated.
+
+The API emits newline-delimited structured JSON logs to stdout/stderr for ingestion by the hosting platform. Request logs use `event: "http_request"` and include `request_id`, method, path, status, duration, remote address, user agent, and auth type. Audit logs use `event: "audit"` with an `audit_event` field for security- and billing-sensitive actions:
+
+- `admin_role_change`
+- `api_key_authentication`
+- `invoice_creation`
+- `invoice_import`
+- `catalog_refresh`
+- `master_key_change`
+- `session_close`
+
+Readiness and metrics endpoints:
+
+- `GET /ready` — returns HTTP 200 when SQLite answers `SELECT 1`, otherwise HTTP 503 with a `request_id` in the error body.
+- `GET /metrics` — exposes minimal Prometheus-compatible platform metrics, currently `synaptics_metering_ready` as `1` or `0`.
+
+Expected production alerts:
+
+- **Elevated error rates:** alert when `http_request` logs with `status >= 500` exceed 1% of requests for 5 minutes, or when any single route has sustained 5xx responses above the platform baseline.
+- **Failed auth spikes:** alert when `audit_event="api_key_authentication"` with `status="failure"` exceeds normal traffic, for example 10 failures in 5 minutes from one source or a 3x increase over the rolling hourly baseline.
+- **Database write failures:** alert on 5xx `http_error` logs whose error message or stack indicates SQLite write failures (`SQLITE_BUSY`, `SQLITE_READONLY`, `SQLITE_IOERR`, `database is locked`) and on `/ready` returning 503 for two consecutive checks.
+- **Invoice verification failures:** alert when imported invoices produce `audit_event="invoice_import"` with `status="rejected"` or verification reasons such as `invoice_account_mismatch` / `session_account_mismatch`; page immediately if failures affect multiple accounts or exceed 5 in 15 minutes.
+
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
 - Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.
@@ -310,7 +378,7 @@ After starting the server, open:
 ## Server Notes / Fixes Applied
 - Removed packaged `node_modules` from the deliverable. Reinstall dependencies on the target machine so native modules like `better-sqlite3` compile for that OS/CPU.
 - Docker build now copies `public/`, `templates/`, and `data/`.
-- Container startup now runs migrations before starting the API.
+- Docker images include an entrypoint that can run migrations before `npm start` when `RUN_MIGRATIONS=true`; compose deployments should normally use the documented one-shot `docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate` workflow instead.
 - Added `.dockerignore` to keep the image clean.
 
 ## Clean Local Server Start
@@ -328,13 +396,30 @@ node src/server.js
 ```bash
 export API_KEY='replace-with-a-generated-secret'
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
-docker compose up -d --build
+docker compose build api
+docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
+docker compose up -d
 ```
 
-`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file.
+`docker-compose.yml` intentionally has no production API-key default. Inject `API_KEY_DIGESTS`, `CORS_ORIGINS`, and `PUBLIC_BASE_URL` through your deployment secret manager, CI/CD environment, or an uncommitted `.env` file. Run the one-shot migration command once per release before `docker compose up -d`; do not enable per-container migrations when running multiple replicas.
+
+### Deployment sequence and migrations
+
+Run database migrations before the API accepts traffic:
+
+```bash
+npm ci --omit=dev
+npm run migrate
+npm start
+```
+
+`npm run migrate` creates or updates the required SQLite tables and records the applied schema version in `schema_migrations`. `npm start` should run only after that command exits successfully. Configure load balancers, orchestrators, and uptime checks to use `GET /ready` instead of `/health` for traffic readiness; `/ready` returns `503` until required tables, columns, and an applied schema version are present.
+
+For container deployments, this repository's `Dockerfile` runs `node src/db/migrate.js && node src/server.js` so a single-container deployment migrates the mounted SQLite database before starting the API process. In multi-replica or rolling deployments, prefer a release job/init job that runs `npm run migrate` once against the shared database, then start API containers with `npm start` and gate traffic on `/ready`.
 
 If you see an `invalid ELF header` error, the project was copied with `node_modules` built on a different machine (for example macOS -> Linux). Delete `node_modules` and reinstall on the target server.
 
