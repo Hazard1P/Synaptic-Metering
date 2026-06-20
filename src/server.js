@@ -8,6 +8,7 @@ import { nanoid } from "nanoid";
 
 import { openDb } from "./db/db.js";
 import {
+  configureApiKeyAuth,
   googleOAuthCallback,
   loadAuthenticatedAccount,
   logout,
@@ -44,6 +45,8 @@ const db = new Proxy({}, {
     return typeof value === "function" ? value.bind(activeDb) : value;
   }
 });
+
+configureApiKeyAuth(db);
 
 
 function publicBaseUrl(req){
@@ -413,14 +416,18 @@ const ACCOUNT_ROLES = new Set(["user", "admin"]);
 app.get("/admin/project-search", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireScope(req, "project:read");
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     res.json(searchProjectFiles(req.query?.q));
   }catch(e){ next(e); }
 });
 
 app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const rows = db.prepare(`
       SELECT id, display_name, role, created_at, updated_at
       FROM accounts
@@ -432,7 +439,9 @@ app.get("/admin/accounts", requireApiKeyOrAccount, (req,res,next)=>{
 
 app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:write");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const role = typeof req.body?.role === "string" ? req.body.role.trim() : "";
     if(!ACCOUNT_ROLES.has(role)){
       return res.status(400).json({ error: "invalid_role", allowed_roles: [...ACCOUNT_ROLES] });
@@ -449,7 +458,9 @@ app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
 
 app.get("/admin/accounts/:id/identities", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const account = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
     if(!account) return res.status(404).json({ error: "account_not_found" });
 
@@ -465,7 +476,9 @@ app.get("/admin/accounts/:id/identities", requireApiKeyOrAccount, (req,res,next)
 
 app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
   try{
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const identities = db.prepare(`
       SELECT i.id, i.account_id, a.display_name, a.role, i.provider_name, i.provider_subject,
         i.email, i.email_verified, i.created_at, i.updated_at
@@ -481,7 +494,9 @@ app.get("/admin/account-identities", requireApiKeyOrAccount, (req,res,next)=>{
 app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireScope(req, "reports:read");
+    requireScope(req, "admin:read");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const window = parseQuarterReportWindow(req.query);
 
     const usageByItem = db.prepare(`
@@ -675,6 +690,23 @@ function rejectForbiddenSession(res){
   return res.status(403).json({ error:"session_forbidden" });
 }
 
+function auditAdminApiKeyUse(req){
+  if(!req.apiKey?.id) return;
+  db.prepare(`
+    INSERT INTO api_key_audit_logs (id, api_key_id, route, method, scopes, account_id, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "aklog_" + nanoid(18),
+    req.apiKey.id,
+    req.originalUrl || req.url || "",
+    req.method || "",
+    JSON.stringify(req.auth?.scopes || []),
+    req.auth?.accountId || null,
+    req.ip || null,
+    req.get?.("user-agent") || null
+  );
+}
+
 function requireAdmin(req){
   if(req.apiKeyAuthenticated) return;
   if(req.authAccount?.role === "admin") return;
@@ -732,7 +764,9 @@ app.get("/intelligence/state", (req,res,next)=>{
 app.post("/admin/intelligence/master-keys", (req,res,next)=>{
   try{
     requireScope(req, "intelligence:write");
+    requireScope(req, "admin:write");
     requireAdmin(req);
+    auditAdminApiKeyUse(req);
     const body = parseBody(MasterKeyBody, req.body);
     const key = upsertIntelligenceNetworkKey(db, {
       keyKind: "master_key",

@@ -20,6 +20,7 @@ cd synaptics-seconds-api
 npm i
 export API_KEY=dev-key-1
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=http://localhost:8080
 npm run migrate
 npm run dev
@@ -39,6 +40,7 @@ curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```bash
 export API_KEY='replace-with-a-generated-secret'
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
@@ -54,8 +56,10 @@ docker compose up -d --build
 ### Auth
 Non-public API endpoints require one of:
 
-- `x-api-key: <key>` header. Store only comma-separated SHA-256 key digests in `API_KEY_DIGESTS`; do not store raw API keys in environment variables or config files.
+- `x-api-key: <key>` header. Store only SHA-256 key digests in the `api_keys.key_digest` database column; do not store raw API keys in environment variables or config files. `npm run migrate` can seed comma-separated `API_KEY_DIGESTS` into `api_keys` with scopes from comma-separated `API_KEY_SCOPES`.
 - A logged-in account session cookie created through `GET /auth/google/start`. Visitor-facing web pages should prefer this account flow; API keys are for administrative and integration clients.
+
+API-key scopes are loaded from SQLite (`api_keys.scopes`) for every request. Admin routes require explicit admin scopes: read-only admin routes require `admin:read`, write routes require `admin:write`, quarterly reports also require `reports:read`, and project search also requires `project:read`. API-key use of admin routes is recorded in `api_key_audit_logs` with key id, route, method, scopes, account id, IP address, user agent, and timestamp; `api_keys.last_used_at` is updated on successful authentication.
 
 ### Developer API-key examples
 
@@ -67,14 +71,14 @@ curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
 ### Admin database
-All `/admin/*` routes require an admin account session or a trusted API key. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers are treated as trusted administrative/integration clients.
+All `/admin/*` routes require an admin account session or an API key with explicit admin scopes. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers must have `admin:read` or `admin:write` as appropriate, plus route-specific scopes such as `reports:read` or `project:read`.
 
 - `GET /admin/accounts` — list internal accounts and roles.
 - `PATCH /admin/accounts/:id/role` — promote or demote an account by setting `role` in the JSON body to one of the existing `accounts.role` values: `user` or `admin`.
 - `GET /admin/accounts/:id/identities` — view the OAuth identities linked to one account for support/admin workflows. The response includes identity metadata such as provider, provider subject, email, verification status, and timestamps, but excludes OAuth access and refresh token data.
 - `GET /admin/account-identities` — view linked OAuth identity metadata across all accounts for support/admin workflows, also excluding OAuth access and refresh token data.
-- `GET /admin/reports/quarterly?year=YYYY&quarter=1-4` — generate a private quarterly admin report. Requires an admin account session or trusted API key plus the `reports:read` scope when scopes are enforced. The report aggregates `usage_events`, `sessions`, `catalog_items`, and `invoices` for the requested UTC quarter and returns metered seconds, invoice quantity, subtotal/total cents, sessions by account, invoice counts by status, and map/intelligence anchor IDs or network keys present in invoice payloads. Do not expose this response through public routes because it can include account and internal business metadata.
-- `GET /admin/project-search?q=<term>` — search repository-owned source and documentation files from the operator console or API. Requires an admin account session or trusted API key plus the `project:read` scope when scopes are enforced. Queries are Unicode-normalized, trimmed, whitespace-collapsed, matched literally/case-insensitively, and must be at least 2 characters. Responses include `query`, `count`, `truncated`, `limits`, `stats`, and `results[]` objects with `path`, `line`, and a short matched `excerpt`. Results are capped at 50 matches and files over 512 KiB are skipped. The searcher excludes dependency/generated/private locations and file types, including `node_modules`, `.git`, `.cache`, `coverage`, `dist`, `build`, `tmp`, `logs`, SQLite/database files, logs, archives, binary images/PDFs, keys/certificates, lockfiles, and secret environment files such as `.env*`.
+- `GET /admin/reports/quarterly?year=YYYY&quarter=1-4` — generate a private quarterly admin report. Requires an admin account session or an API key with both `admin:read` and `reports:read`. The report aggregates `usage_events`, `sessions`, `catalog_items`, and `invoices` for the requested UTC quarter and returns metered seconds, invoice quantity, subtotal/total cents, sessions by account, invoice counts by status, and map/intelligence anchor IDs or network keys present in invoice payloads. Do not expose this response through public routes because it can include account and internal business metadata.
+- `GET /admin/project-search?q=<term>` — search repository-owned source and documentation files from the operator console or API. Requires an admin account session or an API key with both `admin:read` and `project:read`. Queries are Unicode-normalized, trimmed, whitespace-collapsed, matched literally/case-insensitively, and must be at least 2 characters. Responses include `query`, `count`, `truncated`, `limits`, `stats`, and `results[]` objects with `path`, `line`, and a short matched `excerpt`. Results are capped at 50 matches and files over 512 KiB are skipped. The searcher excludes dependency/generated/private locations and file types, including `node_modules`, `.git`, `.cache`, `coverage`, `dist`, `build`, `tmp`, `logs`, SQLite/database files, logs, archives, binary images/PDFs, keys/certificates, lockfiles, and secret environment files such as `.env*`.
 
 Example quarterly report:
 
@@ -105,6 +109,36 @@ Seed or promote a local admin account during migration with:
 ```bash
 ADMIN_ACCOUNT_ID=acct_admin ADMIN_DISPLAY_NAME="Synaptics Admin" npm run migrate
 ```
+
+### API-key rotation and revocation
+
+API keys are stored by digest only in the `api_keys` table. The raw secret is shown only when you generate it; keep it in your deployment secret manager and send it with the `x-api-key` header. Suggested rotation flow:
+
+1. Generate a new high-entropy raw key and calculate its SHA-256 digest.
+2. Insert the new digest with the exact scopes it needs, for example:
+
+   ```sql
+   INSERT INTO api_keys (id, key_digest, label, scopes, expires_at)
+   VALUES (
+     'api_key_ops_2026_q3',
+     '<sha256-hex-digest>',
+     'Operations key 2026 Q3',
+     '["admin:read","reports:read","project:read"]',
+     '2026-09-30T23:59:59Z'
+   );
+   ```
+
+3. Deploy clients with the new raw key while keeping the old key active during the overlap window.
+4. Confirm `api_keys.last_used_at` advances for the new key and no critical client still uses the old key.
+5. Revoke the old key by setting `revoked_at`, for example:
+
+   ```sql
+   UPDATE api_keys
+   SET revoked_at = datetime('now')
+   WHERE id = 'api_key_ops_2026_q2';
+   ```
+
+Use `expires_at` for planned retirement and `revoked_at` for immediate shutdown. Review `api_key_audit_logs` during and after rotation to confirm which admin routes were accessed by each key.
 
 ### Anchored Intelligence
 - `GET /intelligence/anchors` — public description of the permanent anchored asset map used for 1 tick/second intelligence metering.
@@ -316,6 +350,7 @@ node src/server.js
 ```bash
 export API_KEY='replace-with-a-generated-secret'
 export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
+export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
 export TRUST_PROXY=true
