@@ -1,0 +1,238 @@
+import assert from "node:assert/strict";
+import { before, after, describe, it } from "node:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { computeSessionSummary } from "../src/lib/billing.js";
+import { verifyInvoiceForAccount } from "../src/lib/invoiceVerification.js";
+import { validateStartupConfig } from "../src/lib/configValidation.js";
+
+const tempDir = mkdtempSync(path.join(tmpdir(), "synaptic-metering-test-"));
+const databasePath = path.join(tempDir, "test.sqlite");
+const apiKey = "test-api-key";
+const apiKeyDigest = createHash("sha256").update(apiKey).digest("hex");
+
+process.env.NODE_ENV = "test";
+process.env.DATABASE_PATH = databasePath;
+process.env.API_KEY_DIGESTS = apiKeyDigest;
+process.env.SQLITE_JOURNAL_MODE = "DELETE";
+
+execFileSync(process.execPath, ["src/db/migrate.js"], {
+  cwd: path.resolve(import.meta.dirname, ".."),
+  env: process.env,
+  stdio: "pipe"
+});
+
+const { app, getDb } = await import("../src/server.js");
+let server;
+let baseUrl;
+let db;
+
+function request(pathname, options = {}){
+  return fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+}
+
+async function json(response){
+  return response.json();
+}
+
+function seedAccount(id, role = "user"){
+  db.prepare(`
+    INSERT INTO accounts (id, display_name, role, created_at, updated_at)
+    VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET role=excluded.role, updated_at=datetime('now')
+  `).run(id, id, role);
+}
+
+function authCookie(accountId){
+  const id = `authsess_${accountId}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  db.prepare("INSERT INTO auth_sessions (id, account_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))")
+    .run(id, accountId);
+  return `syn_meter_session=${encodeURIComponent(id)}`;
+}
+
+function seedCatalogItem(overrides = {}){
+  const item = {
+    id: "item_seconds",
+    label: "Metered Intelligence",
+    unit_price_cents: 3,
+    currency: "CAD",
+    default_qty: 0,
+    unit_name: "second",
+    quantity_mode: "seconds",
+    auto_increment_by: 2,
+    ...overrides
+  };
+  db.prepare(`
+    INSERT OR REPLACE INTO catalog_items
+      (id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by)
+    VALUES (?, ?, ?, ?, 'test', ?, ?, ?, ?)
+  `).run(item.id, item.label, item.unit_price_cents, item.currency, item.default_qty, item.unit_name, item.quantity_mode, item.auto_increment_by);
+  return item;
+}
+
+function seedSession({ id = `sess_${Math.random().toString(16).slice(2)}`, accountId = "acct_user", itemId = "item_seconds", live = 2, recovered = 0, status = "open" } = {}){
+  db.prepare("INSERT INTO sessions (id, account_id, seat_id, status, current_item_id) VALUES (?, ?, 'seat-a', ?, ?)")
+    .run(id, accountId, status, itemId);
+  if(live){
+    db.prepare("INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind) VALUES (?, ?, ?, ?, 'live_tick')")
+      .run(`ev_live_${id}`, id, itemId, live);
+  }
+  if(recovered){
+    db.prepare("INSERT INTO usage_events (id, session_id, item_id, seconds, event_kind) VALUES (?, ?, ?, ?, 'recovery_adjustment')")
+      .run(`ev_recovery_${id}`, id, itemId, recovered);
+  }
+  return id;
+}
+
+before(async () => {
+  db = getDb();
+  seedAccount("acct_user", "user");
+  seedAccount("acct_other", "user");
+  seedAccount("acct_admin", "admin");
+  seedCatalogItem();
+  await new Promise(resolve => {
+    server = app.listen(0, () => {
+      baseUrl = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+});
+
+after(async () => {
+  await new Promise(resolve => server.close(resolve));
+  db.close();
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe("computeSessionSummary", () => {
+  it("totals live and recovery usage with catalog pricing", () => {
+    const sessionId = seedSession({ live: 5, recovered: 3 });
+    const summary = computeSessionSummary(db, sessionId);
+    assert.equal(summary.metrics.intelligence_seconds, 8);
+    assert.equal(summary.metrics.live_tick_seconds, 5);
+    assert.equal(summary.metrics.recovery_adjustment_seconds, 3);
+    assert.equal(summary.metrics.tracked_quantity, 16);
+    assert.equal(summary.total.cents, 48);
+    assert.equal(summary.lines[0].quantity, 16);
+  });
+
+  it("returns null for a missing session", () => {
+    assert.equal(computeSessionSummary(db, "missing"), null);
+  });
+});
+
+describe("verifyInvoiceForAccount", () => {
+  it("accepts invoices tied to account-owned session history", () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 1 });
+    const result = verifyInvoiceForAccount(db, {
+      accountId: "acct_user",
+      payload: { account_id: "acct_user", session_id: sessionId }
+    });
+    assert.equal(result.accepted, true);
+    assert.equal(result.status, "accepted");
+    assert.equal(result.verificationMethod, "account_history");
+  });
+
+  it("rejects account and session mismatches", () => {
+    const otherSessionId = seedSession({ accountId: "acct_other", live: 1 });
+    assert.equal(verifyInvoiceForAccount(db, {
+      accountId: "acct_user",
+      payload: { account_id: "acct_other", session_id: otherSessionId }
+    }).reason, "invoice_account_mismatch");
+    assert.equal(verifyInvoiceForAccount(db, {
+      accountId: "acct_user",
+      payload: { account_id: "acct_user", session_id: otherSessionId }
+    }).reason, "session_account_mismatch");
+  });
+});
+
+describe("validateStartupConfig", () => {
+  it("allows non-production configuration without production-only secrets", () => {
+    assert.deepEqual(validateStartupConfig({ NODE_ENV: "test" }), { ok: true, issues: [] });
+  });
+
+  it("throws detailed production configuration errors", () => {
+    assert.throws(() => validateStartupConfig({ NODE_ENV: "production", PUBLIC_BASE_URL: "http://example.test" }), error => {
+      assert.equal(error.name, "StartupConfigError");
+      assert(error.issues.some(issue => issue.variable === "GOOGLE_CLIENT_ID"));
+      assert(error.issues.some(issue => issue.variable === "PUBLIC_BASE_URL"));
+      return true;
+    });
+  });
+
+  it("rejects malformed optional email allowlists", () => {
+    assert.throws(() => validateStartupConfig({ NODE_ENV: "test", ADMIN_GOOGLE_EMAILS: "not-an-email" }), /ADMIN_GOOGLE_EMAILS/);
+  });
+});
+
+describe("session lifecycle routes", () => {
+  it("creates, starts, heartbeats, stops, summarizes, and closes a session via API key", async () => {
+    const createRes = await request("/sessions", { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ seat_id: "seat-route" }) });
+    assert.equal(createRes.status, 201);
+    const created = await json(createRes);
+
+    assert.equal((await request(`/sessions/${created.id}/start`, { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ item_id: "item_seconds" }) })).status, 200);
+    const heartbeat = await json(await request(`/sessions/${created.id}/heartbeat`, { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ seconds: 1, recovered_seconds: 2 }) }));
+    assert.equal(heartbeat.added_seconds, 3);
+    assert.equal((await request(`/sessions/${created.id}/stop`, { method: "POST", headers: { "x-api-key": apiKey }, body: "{}" })).status, 200);
+
+    const summary = await json(await request(`/sessions/${created.id}/summary`, { headers: { "x-api-key": apiKey } }));
+    assert.equal(summary.metrics.intelligence_seconds, 3);
+    assert.equal(summary.metrics.recovery_adjustment_seconds, 2);
+
+    const closeRes = await request(`/sessions/${created.id}/close`, { method: "POST", headers: { "x-api-key": apiKey }, body: "{}" });
+    assert.equal(closeRes.status, 200);
+    assert.equal((await request(`/sessions/${created.id}/heartbeat`, { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ seconds: 1 }) })).status, 409);
+  });
+});
+
+describe("invoice generation and import", () => {
+  it("generates accepted invoices for owned sessions and persists invoice keys", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 4 });
+    const res = await request("/invoices/from-session", { method: "POST", headers: { cookie: authCookie("acct_user") }, body: JSON.stringify({ session_id: sessionId }) });
+    assert.equal(res.status, 201);
+    const body = await json(res);
+    assert.equal(body.invoice.session_id, sessionId);
+    assert.equal(body.invoice.account_id, "acct_user");
+    assert.equal(body.invoice.totals.total_cents, 24);
+    assert.equal(body.key.key_label, `A1:${sessionId}`);
+  });
+
+  it("imports accepted, pending, and rejected invoices according to verification", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 1 });
+    const cookie = authCookie("acct_user");
+
+    const accepted = await json(await request("/invoices/import", { method: "POST", headers: { cookie }, body: JSON.stringify({ source: "platform_attachment", session_id: sessionId, payload: { account_id: "acct_user", session_id: sessionId } }) }));
+    assert.equal(accepted.verification.status, "accepted");
+    assert.equal(accepted.invoice.session_id, sessionId);
+
+    const pending = await json(await request("/invoices/import", { method: "POST", headers: { cookie }, body: JSON.stringify({ source: "legacy_upload", payload: { account_id: "acct_user", session_id: "missing-session" } }) }));
+    assert.equal(pending.verification.status, "pending");
+    assert.equal(pending.invoice.session_id, null);
+
+    const rejected = await json(await request("/invoices/import", { method: "POST", headers: { cookie }, body: JSON.stringify({ source: "legacy_upload", payload: { account_id: "acct_other" } }) }));
+    assert.equal(rejected.verification.status, "rejected");
+  });
+});
+
+describe("admin authorization", () => {
+  it("requires admin account or API key for admin-only behavior", async () => {
+    const userRes = await request("/admin/intelligence/master-keys", { method: "POST", headers: { cookie: authCookie("acct_user") }, body: JSON.stringify({ key_label: "MK:user-denied" }) });
+    assert.equal(userRes.status, 403);
+
+    const adminRes = await request("/admin/intelligence/master-keys", { method: "POST", headers: { cookie: authCookie("acct_admin") }, body: JSON.stringify({ key_label: "MK:admin-allowed" }) });
+    assert.equal(adminRes.status, 201);
+
+    const apiKeyRes = await request("/admin/intelligence/master-keys", { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ key_label: "MK:api-key-allowed" }) });
+    assert.equal(apiKeyRes.status, 201);
+  });
+});
