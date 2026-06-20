@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      DATABASE_PATH: ${{ runner.temp }}/synaptic-metering-ci.sqlite
+      SQLITE_JOURNAL_MODE: DELETE
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run SQLite migration
+        run: npm run migrate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run lint/static checks
+        run: npm run lint

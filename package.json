@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "test": "node --test",
+    "lint": "node --check src/server.js && for f in src/lib/*.js src/db/*.js test/*.test.js; do node --check \"$f\"; done"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
