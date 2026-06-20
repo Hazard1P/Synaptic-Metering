@@ -18,7 +18,7 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
-import { verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
+import { normalizedServerInvoicePayload, verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
@@ -1106,6 +1106,7 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
       ? (body.session_id ?? verification.checked?.sessionIds?.[0] ?? null)
       : null;
     const verificationComplete = status !== "pending";
+    const storedPayload = normalizedServerInvoicePayload(payload, verification);
 
     db.prepare(`
       INSERT INTO invoices (
@@ -1128,7 +1129,7 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
       verificationMethod,
       verificationComplete ? 1 : 0,
       verification.accepted ? 1 : 0,
-      JSON.stringify(payload)
+      JSON.stringify(storedPayload)
     );
 
     const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);
