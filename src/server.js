@@ -687,7 +687,7 @@ function requireAdmin(req){
 app.get("/catalog", (req,res,next)=>{
   try{
     requireScope(req, "catalog:read");
-    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by FROM catalog_items ORDER BY id").all();
+    const rows = db.prepare("SELECT id, label, unit_price_cents, currency, source, default_qty, unit_name, quantity_mode, auto_increment_by, effective_from, effective_to, version, active FROM catalog_items WHERE active = 1 ORDER BY id").all();
     res.json({ items: rows });
   }catch(e){ next(e); }
 });
@@ -771,7 +771,7 @@ app.post("/sessions/:id/start", (req,res,next)=>{
     if(!canAccessMeteringSession(req, sess)) return rejectForbiddenSession(res);
     if(sess.status !== "open") return res.status(409).json({ error:"session_closed" });
 
-    const item = db.prepare("SELECT * FROM catalog_items WHERE id=?").get(body.item_id);
+    const item = db.prepare("SELECT * FROM catalog_items WHERE id=? AND active = 1").get(body.item_id);
     if(!item) return res.status(404).json({ error:"item_not_found" });
 
     // stop any current item (idempotent)
@@ -889,9 +889,17 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       quantity: l.quantity,
       quantity_unit: l.quantity_unit,
       auto_increment_by: l.auto_increment_by,
+      catalog_version: l.catalog_version,
+      catalog_effective_from: l.catalog_effective_from,
+      catalog_effective_to: l.catalog_effective_to,
+      price_snapshot: l.price_snapshot,
       unit_price_cents: l.unit_price.cents,
       line_total_cents: l.cost.cents
     })),
+    catalog: {
+      versions: summary.catalog_versions,
+      price_snapshot: summary.catalog_snapshot
+    },
     intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1", invoiceKey: `A1:${session_id}` }),
     network: {
       a1_box_key: `A1:${session_id}`,
@@ -909,13 +917,16 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
   };
 
   const id = "inv_" + nanoid(18);
+  const catalogVersion = summary.catalog_versions.join(",") || null;
+  const catalogSnapshotJson = JSON.stringify(summary.catalog_snapshot);
+
   db.prepare(`
     INSERT INTO invoices (
       id, account_id, session_id, source, status, verification_method,
-      accepted_at, verified_at, payload_json
+      accepted_at, verified_at, payload_json, catalog_version, catalog_snapshot_json
     )
-    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?)
-  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice));
+    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?, ?, ?)
+  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice), catalogVersion, catalogSnapshotJson);
 
   const key = upsertIntelligenceNetworkKey(db, {
     keyKind: "invoice_key",
@@ -932,7 +943,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
 app.get("/invoices", requireAccount, (req,res)=>{
   const rows = db.prepare(`
     SELECT id, account_id, session_id, source, status, verification_method,
-      accepted_at, verified_at, created_at, updated_at, payload_json
+      accepted_at, verified_at, created_at, updated_at, catalog_version, catalog_snapshot_json, payload_json
     FROM invoices
     WHERE account_id=?
     ORDER BY created_at DESC, id DESC
@@ -950,6 +961,8 @@ app.get("/invoices", requireAccount, (req,res)=>{
       verified_at: row.verified_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      catalog_version: row.catalog_version,
+      catalog_snapshot: row.catalog_snapshot_json ? JSON.parse(row.catalog_snapshot_json) : null,
       invoice: JSON.parse(row.payload_json)
     }))
   });

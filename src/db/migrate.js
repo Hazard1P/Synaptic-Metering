@@ -1,5 +1,6 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
 import { seedMapAssetDigests } from "../lib/mapAuthentication.js";
+import { refreshCatalog } from "../lib/catalog.js";
 
 if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
   throw new Error("SQLite-at-rest encryption is required before migrations can run.");
@@ -18,7 +19,11 @@ CREATE TABLE IF NOT EXISTS catalog_items (
   label TEXT NOT NULL,
   unit_price_cents INTEGER NOT NULL,
   currency TEXT NOT NULL DEFAULT 'CAD',
-  source TEXT NOT NULL DEFAULT 'invoice',
+  source TEXT NOT NULL DEFAULT 'catalog_json',
+  effective_from TEXT,
+  effective_to TEXT,
+  version TEXT NOT NULL DEFAULT 'legacy',
+  active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -170,6 +175,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   verified_at TEXT,
   accepted_at TEXT,
   payload_json TEXT NOT NULL,
+  catalog_version TEXT,
+  catalog_snapshot_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -204,6 +211,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   accepted_at TEXT,
   verified_at TEXT,
   payload_json TEXT NOT NULL,
+  catalog_version TEXT,
+  catalog_snapshot_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -279,18 +288,33 @@ db.prepare(`
 );
 
 seedMapAssetDigests(db);
+const invoiceColumns = [
+  ["catalog_version", "TEXT"],
+  ["catalog_snapshot_json", "TEXT"]
+];
+for (const [name, ddl] of invoiceColumns){
+  if(!hasColumn('invoices', name)){
+    db.exec(`ALTER TABLE invoices ADD COLUMN ${name} ${ddl}`);
+  }
+}
 
 const catalogColumns = [
   ["default_qty", "INTEGER NOT NULL DEFAULT 0"],
   ["unit_name", "TEXT NOT NULL DEFAULT 'second'"],
   ["quantity_mode", "TEXT NOT NULL DEFAULT 'seconds'"],
-  ["auto_increment_by", "INTEGER NOT NULL DEFAULT 1"]
+  ["auto_increment_by", "INTEGER NOT NULL DEFAULT 1"],
+  ["effective_from", "TEXT"],
+  ["effective_to", "TEXT"],
+  ["version", "TEXT NOT NULL DEFAULT 'legacy'"],
+  ["active", "INTEGER NOT NULL DEFAULT 1"]
 ];
 for (const [name, ddl] of catalogColumns){
   if(!hasColumn('catalog_items', name)){
     db.exec(`ALTER TABLE catalog_items ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+refreshCatalog(db);
 
 console.log("Migration complete. SQLite at-rest decision:", DB_AT_REST_SECURITY.approach);
 db.close();
