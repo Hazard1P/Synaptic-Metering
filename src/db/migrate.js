@@ -81,6 +81,40 @@ CREATE TABLE IF NOT EXISTS account_business_associations (
 CREATE INDEX IF NOT EXISTS idx_account_business_associations_account_id
   ON account_business_associations(account_id);
 
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  key_digest TEXT NOT NULL CHECK(length(key_digest) = 64),
+  label TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT,
+  revoked_at TEXT,
+  last_used_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_digest
+  ON api_keys(key_digest);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_active
+  ON api_keys(revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS api_key_audit_logs (
+  id TEXT PRIMARY KEY,
+  api_key_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  method TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  account_id TEXT,
+  ip_address TEXT,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_audit_logs_api_key_id_created_at
+  ON api_key_audit_logs(api_key_id, created_at);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
@@ -244,6 +278,30 @@ for (const [name, ddl] of accountColumns){
     db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+
+const seedApiKeyDigests = (process.env.API_KEY_DIGESTS || "")
+  .split(",")
+  .map(digest => digest.trim().toLowerCase())
+  .filter(digest => /^[a-f0-9]{64}$/.test(digest));
+const seedApiKeyScopes = (process.env.API_KEY_SCOPES || "catalog:read,sessions:write,telemetry:write,intelligence:read")
+  .split(",")
+  .map(scope => scope.trim())
+  .filter(Boolean);
+seedApiKeyDigests.forEach((digest, index) => {
+  db.prepare(`
+    INSERT INTO api_keys (id, key_digest, label, scopes, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(key_digest) DO UPDATE SET
+      scopes=excluded.scopes,
+      label=excluded.label
+  `).run(
+    `api_key_env_${index + 1}`,
+    digest,
+    `Environment API key ${index + 1}`,
+    JSON.stringify(seedApiKeyScopes)
+  );
+});
 
 if(process.env.ADMIN_ACCOUNT_ID){
   db.prepare(`
