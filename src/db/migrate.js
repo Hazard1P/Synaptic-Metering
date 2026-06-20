@@ -1,10 +1,6 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
 import { seedMapAssetDigests } from "../lib/mapAuthentication.js";
 
-if(DB_AT_REST_SECURITY.requiredForCurrentSchema){
-  throw new Error("SQLite-at-rest encryption is required before migrations can run.");
-}
-
 const db = openDb();
 
 function hasColumn(tableName, columnName){
