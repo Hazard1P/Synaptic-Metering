@@ -276,6 +276,33 @@ DATABASE_PATH=/mnt/data/app.db
 SQLITE_JOURNAL_MODE=DELETE
 ```
 
+
+## Observability and alerts
+
+Every response includes an `X-Request-ID` header. Clients may provide `X-Request-ID` or `X-Correlation-ID`; otherwise the API generates a `req_...` identifier. JSON error responses include the same `request_id` so platform logs, client reports, and support tickets can be correlated.
+
+The API emits newline-delimited structured JSON logs to stdout/stderr for ingestion by the hosting platform. Request logs use `event: "http_request"` and include `request_id`, method, path, status, duration, remote address, user agent, and auth type. Audit logs use `event: "audit"` with an `audit_event` field for security- and billing-sensitive actions:
+
+- `admin_role_change`
+- `api_key_authentication`
+- `invoice_creation`
+- `invoice_import`
+- `catalog_refresh`
+- `master_key_change`
+- `session_close`
+
+Readiness and metrics endpoints:
+
+- `GET /ready` — returns HTTP 200 when SQLite answers `SELECT 1`, otherwise HTTP 503 with a `request_id` in the error body.
+- `GET /metrics` — exposes minimal Prometheus-compatible platform metrics, currently `synaptics_metering_ready` as `1` or `0`.
+
+Expected production alerts:
+
+- **Elevated error rates:** alert when `http_request` logs with `status >= 500` exceed 1% of requests for 5 minutes, or when any single route has sustained 5xx responses above the platform baseline.
+- **Failed auth spikes:** alert when `audit_event="api_key_authentication"` with `status="failure"` exceeds normal traffic, for example 10 failures in 5 minutes from one source or a 3x increase over the rolling hourly baseline.
+- **Database write failures:** alert on 5xx `http_error` logs whose error message or stack indicates SQLite write failures (`SQLITE_BUSY`, `SQLITE_READONLY`, `SQLITE_IOERR`, `database is locked`) and on `/ready` returning 503 for two consecutive checks.
+- **Invoice verification failures:** alert when imported invoices produce `audit_event="invoice_import"` with `status="rejected"` or verification reasons such as `invoice_account_mismatch` / `session_account_mismatch`; page immediately if failures affect multiple accounts or exceed 5 in 15 minutes.
+
 ## Production Notes
 - Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
 - Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.

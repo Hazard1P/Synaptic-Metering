@@ -2,7 +2,6 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import { nanoid } from "nanoid";
 
@@ -45,6 +44,75 @@ const db = new Proxy({}, {
   }
 });
 
+
+function logJson(level, event, fields = {}){
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    service: "synaptics-seconds-api",
+    ...fields
+  };
+  const line = JSON.stringify(entry);
+  if(level === "error") console.error(line);
+  else if(level === "warn") console.warn(line);
+  else console.log(line);
+}
+
+function auditLog(event, req, fields = {}){
+  logJson("info", "audit", {
+    audit_event: event,
+    request_id: req?.id,
+    method: req?.method,
+    path: req?.originalUrl || req?.url,
+    actor: req?.authAccount?.id || req?.auth?.accountId || (req?.apiKeyAuthenticated ? "api-key" : null),
+    auth_type: req?.apiKeyAuthenticated ? "api_key" : (req?.authAccount ? "account_session" : "unknown"),
+    ...fields
+  });
+}
+
+function requestIdMiddleware(req, res, next){
+  const inboundRequestId = String(req.header("x-request-id") || req.header("x-correlation-id") || "").trim();
+  req.id = inboundRequestId || `req_${nanoid(18)}`;
+  res.setHeader("X-Request-ID", req.id);
+
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if(res.statusCode >= 400 && body && typeof body === "object" && !Array.isArray(body)){
+      return originalJson({ request_id: req.id, ...body });
+    }
+    return originalJson(body);
+  };
+
+  const started = process.hrtime.bigint();
+  res.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    logJson(res.statusCode >= 500 ? "error" : "info", "http_request", {
+      request_id: req.id,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      route: req.route?.path,
+      status: res.statusCode,
+      duration_ms: Number(durationMs.toFixed(3)),
+      remote_addr: req.ip,
+      user_agent: req.get("user-agent") || null,
+      auth_type: req.apiKeyAuthenticated ? "api_key" : (req.authAccount ? "account_session" : "none")
+    });
+    if(req.apiKeyAuthenticated || req.header("x-api-key")){
+      auditLog("api_key_authentication", req, { status: req.apiKeyAuthenticated && res.statusCode < 400 ? "success" : "failure" });
+    }
+  });
+  next();
+}
+
+function dbReady(){
+  try{
+    db.prepare("SELECT 1 AS ready").get();
+    return { ok: true };
+  }catch(e){
+    return { ok: false, error: e?.message || "database_unavailable" };
+  }
+}
 
 function publicBaseUrl(req){
   const configured = String(process.env.PUBLIC_BASE_URL || "").trim();
@@ -167,11 +235,11 @@ function enforceHttpsInProduction(req, res, next){
 app.set("trust proxy", trustProxySetting);
 
 // --- middleware
+app.use(requestIdMiddleware);
 app.use(enforceHttpsInProduction);
 app.use(helmet());
 app.use(cors(corsOptions()));
 app.use(express.json({ limit: "1mb" }));
-app.use(morgan("tiny"));
 app.use(rateLimit({ windowMs: 60_000, max: 240 })); // 240 req/min default
 
 import path from "path";
@@ -320,6 +388,19 @@ app.get("/genesis", (req,res)=>{
 
 // --- health (public)
 app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
+app.get("/ready", (req,res)=>{
+  const readiness = dbReady();
+  res.status(readiness.ok ? 200 : 503).json({ ...readiness, service:"synaptics-seconds-api", ts:new Date().toISOString() });
+});
+app.get("/metrics", (req,res)=>{
+  const readiness = dbReady();
+  res.type("text/plain; version=0.0.4").send([
+    "# HELP synaptics_metering_ready Database readiness, 1 when ready.",
+    "# TYPE synaptics_metering_ready gauge",
+    `synaptics_metering_ready ${readiness.ok ? 1 : 0}`,
+    ""
+  ].join("\n"));
+});
 
 app.get("/intelligence/anchors", (req,res)=>{
   res.json({
@@ -442,6 +523,7 @@ app.patch("/admin/accounts/:id/role", requireApiKeyOrAccount, (req,res,next)=>{
     if(!account) return res.status(404).json({ error: "account_not_found" });
 
     db.prepare("UPDATE accounts SET role=?, updated_at=datetime('now') WHERE id=?").run(role, req.params.id);
+    auditLog("admin_role_change", req, { target_account_id: req.params.id, previous_role: account.role, new_role: role });
     const updated = db.prepare("SELECT id, display_name, role, created_at, updated_at FROM accounts WHERE id=?").get(req.params.id);
     res.json({ account: updated });
   }catch(e){ next(e); }
@@ -605,7 +687,7 @@ app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
 // --- auth for everything else
 app.use((req,res,next)=>{ res.setHeader('X-Synaptics-Systems','seconds-metering-api'); next(); });
 app.use((req,res,next)=>{
-  if(req.path === "/health" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
+  if(req.path === "/health" || req.path === "/ready" || req.path === "/metrics" || req.path === "/" || req.path === "/genesis" || req.path.startsWith("/public")) return next();
   return requireApiKeyOrAccount(req,res,next);
 });
 
@@ -696,6 +778,7 @@ app.post("/catalog/refresh", (req,res,next)=>{
   try{
     requireScope(req, "catalog:write");
     const rows = refreshCatalog(db);
+    auditLog("catalog_refresh", req, { item_count: rows.length });
     res.json({ ok:true, items: rows });
   }catch(e){ next(e); }
 });
@@ -742,6 +825,7 @@ app.post("/admin/intelligence/master-keys", (req,res,next)=>{
       anchorAssetId: body.anchor_asset_id,
       status: body.status
     });
+    auditLog("master_key_change", req, { key_label: key.key_label, key_kind: key.key_kind, status: key.status, anchor_asset_id: key.anchor_asset_id, account_id: key.account_id });
     res.status(201).json({ key });
   }catch(e){ next(e); }
 });
@@ -852,6 +936,7 @@ app.post("/sessions/:id/close", (req,res,next)=>{
       WHERE id=?
     `).run(sessionId);
 
+    auditLog("session_close", req, { session_id: sessionId, account_id: sess.account_id, seat_id: sess.seat_id });
     res.json({ ok:true, status:"closed" });
   }catch(e){ next(e); }
 });
@@ -926,6 +1011,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     status: "confirmed"
   });
 
+  auditLog("invoice_creation", req, { invoice_id: id, session_id, account_id: req.authAccount.id, source: "generated", status: "accepted" });
   res.status(201).json({ id, invoice, key });
 });
 
@@ -999,6 +1085,7 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
     );
 
     const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);
+    auditLog("invoice_import", req, { invoice_id: id, account_id: req.authAccount.id, source: body.source, status, verification_reason: verification.reason });
     res.status(201).json({
       invoice,
       verification: {
@@ -1057,6 +1144,7 @@ app.post("/ndsp/telemetry", (req,res,next)=>{
 // --- error handler
 app.use((err, req, res, next)=>{
   const status = err?.status || 500;
+  logJson(status >= 500 ? "error" : "warn", "http_error", { request_id: req.id, method: req.method, path: req.originalUrl || req.url, status, error: err?.message || "server_error" });
   res.status(status).json({
     error: err?.message || "server_error",
     issues: err?.issues || undefined
