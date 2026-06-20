@@ -206,9 +206,13 @@ GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
 GOOGLE_REDIRECT_URI=https://your-domain.example/auth/google/callback
 PUBLIC_BASE_URL=https://your-domain.example
 TOKEN_ENCRYPTION_KEY=base64-or-hex-32-byte-key-material
+DB_AT_REST_ENCRYPTION=managed-encrypted-storage
+STORAGE_ENCRYPTION_AT_REST=true
+STORAGE_ENCRYPTION_PROVIDER=<provider-and-volume-control>
+STORAGE_ENCRYPTION_EVIDENCE=<policy-url-ticket-or-runbook-section>
 ```
 
-In production, startup validation fails fast with a `StartupConfigError` if any deployment-critical setting is missing. Required production settings are `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, either `PUBLIC_BASE_URL` or `GOOGLE_REDIRECT_URI`, `API_KEY_DIGESTS`, and `CORS_ORIGINS`. `PUBLIC_BASE_URL` must be an absolute `https://` URL in production. Each startup error names the missing or invalid variable and the feature it affects so platform logs point directly to the deployment fix.
+In production, startup validation fails fast with a `StartupConfigError` if any deployment-critical setting is missing. Required production settings are `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, either `PUBLIC_BASE_URL` or `GOOGLE_REDIRECT_URI`, `API_KEY_DIGESTS`, `CORS_ORIGINS`, and the managed encrypted storage attestation variables `DB_AT_REST_ENCRYPTION=managed-encrypted-storage`, `STORAGE_ENCRYPTION_AT_REST=true`, `STORAGE_ENCRYPTION_PROVIDER`, and `STORAGE_ENCRYPTION_EVIDENCE`. `PUBLIC_BASE_URL` must be an absolute `https://` URL in production. Each startup error names the missing or invalid variable and the feature it affects so platform logs point directly to the deployment fix.
 
 The Google OAuth authorized redirect URI must exactly match the callback URL used by the app:
 
@@ -247,6 +251,10 @@ GOOGLE_REDIRECT_URI=https://<metering-origin>/auth/google/callback
 COOKIE_SECURE=true
 TRUST_PROXY=true
 NODE_ENV=production
+DB_AT_REST_ENCRYPTION=managed-encrypted-storage
+STORAGE_ENCRYPTION_AT_REST=true
+STORAGE_ENCRYPTION_PROVIDER=<encrypted-block-volume-and-backup-control>
+STORAGE_ENCRYPTION_EVIDENCE=<deployment-runbook-or-compliance-ticket>
 GOOGLE_ALLOWED_EMAILS=<allowed-user@example.com>,<second-user@example.com>
 ADMIN_GOOGLE_EMAILS=<admin-user@example.com>
 BUSINESS_GOOGLE_EMAILS=<business-contact@example.com>
@@ -315,6 +323,10 @@ Example serverless environment:
 SERVERLESS=true
 DATABASE_PATH=/mnt/data/app.db
 SQLITE_JOURNAL_MODE=DELETE
+DB_AT_REST_ENCRYPTION=managed-encrypted-storage
+STORAGE_ENCRYPTION_AT_REST=true
+STORAGE_ENCRYPTION_PROVIDER=<serverless-encrypted-volume-control>
+STORAGE_ENCRYPTION_EVIDENCE=<provider-doc-runbook-or-ticket>
 ```
 
 
@@ -446,8 +458,17 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 - API-key comparisons are performed against SHA-256 digests using Node's timing-safe comparison.
 
 ### Data at rest
-- Current SQLite tables store metering/session identifiers and telemetry payloads, not raw API keys, OAuth refresh tokens, payment secrets, or other account secrets. First-pass baseline therefore relies on encrypted host volumes/disks, least-privileged file access, and backups encrypted by the deployment platform.
-- Do not add sensitive account/OAuth fields to SQLite until SQLCipher or field-level envelope encryption is integrated. Setting `DB_ENCRYPTION_REQUIRED=true` intentionally fails fast in this build to prevent a false sense of encryption.
+- Approved posture for this build: **managed encrypted storage**. The app uses standard `better-sqlite3`, not SQLCipher, so production SQLite protection must come from the deployment platform's encrypted persistent volume or disk plus encrypted snapshots/backups. The guarantee must cover the main `DATABASE_PATH` file and any SQLite sidecars such as `.db-wal` and `.db-shm`.
+- Production startup and migrations fail fast unless the deployment attests to that posture with `DB_AT_REST_ENCRYPTION=managed-encrypted-storage`, `STORAGE_ENCRYPTION_AT_REST=true`, `STORAGE_ENCRYPTION_PROVIDER`, and `STORAGE_ENCRYPTION_EVIDENCE`. Use `STORAGE_ENCRYPTION_PROVIDER` for the concrete provider/control name and `STORAGE_ENCRYPTION_EVIDENCE` for a policy URL, control ID, runbook section, or compliance ticket showing that the volume and backups are encrypted at rest.
+- Keep SQLite file permissions least-privileged to the application user, keep `DATABASE_PATH` off ephemeral or unencrypted local disks, and confirm backup/export jobs inherit encryption. If WAL mode is enabled, treat `app.db-wal` and `app.db-shm` as protected database material.
+- Do not add new sensitive columns unless they are covered by the managed encrypted storage control or a future SQLCipher/field-level envelope encryption implementation. Raw API keys must remain outside SQLite; retained Google OAuth access/refresh tokens are stored only as application ciphertext fields.
+
+#### Existing SQLite migration to encrypted managed storage
+1. Stop application writers and run a final backup of the current database directory, including `app.db`, `app.db-wal`, and `app.db-shm` when WAL mode is active. Protect this temporary backup as sensitive data.
+2. Provision the approved encrypted persistent volume/disk and encrypted backup policy in the target platform. Record the provider/control in `STORAGE_ENCRYPTION_PROVIDER` and the evidence link or ticket in `STORAGE_ENCRYPTION_EVIDENCE`.
+3. Copy the SQLite database and sidecar files onto the encrypted volume, then point `DATABASE_PATH` at that location. For serverless deployments, use an absolute path inside the mounted volume.
+4. Start the app or run `npm run migrate` with `NODE_ENV=production`, `DB_AT_REST_ENCRYPTION=managed-encrypted-storage`, `STORAGE_ENCRYPTION_AT_REST=true`, `STORAGE_ENCRYPTION_PROVIDER`, and `STORAGE_ENCRYPTION_EVIDENCE` set. Startup should fail if any attestation is missing.
+5. Verify application reads/writes, then securely delete unencrypted source copies and rotate any backups that were created before storage encryption was enabled.
 
 ### Browser secret handling
 - Browser pages must not persist API keys in `localStorage`, IndexedDB, cookies without strict security attributes, or other long-lived client storage.

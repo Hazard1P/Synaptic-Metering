@@ -2,14 +2,76 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 
+const APPROVED_AT_REST_APPROACH = "managed-encrypted-storage";
+
 export const DB_AT_REST_SECURITY = {
-  requiredForCurrentSchema: false,
-  approach: "Use host/volume encryption for this SQLite file; do not add account secrets, OAuth tokens, or raw API keys unless SQLCipher or field-level envelope encryption is integrated first."
+  requiredForCurrentSchema: true,
+  approach: "Require managed encrypted storage for the SQLite database, WAL/SHM sidecars, snapshots, and backups. This build does not provide SQLCipher file encryption; production must document the managed storage control before startup.",
+  approvedApproach: APPROVED_AT_REST_APPROACH,
+  requiredProductionEnv: [
+    "DB_AT_REST_ENCRYPTION=managed-encrypted-storage",
+    "STORAGE_ENCRYPTION_AT_REST=true",
+    "STORAGE_ENCRYPTION_PROVIDER",
+    "STORAGE_ENCRYPTION_EVIDENCE"
+  ]
 };
 
-function assertAtRestEncryptionConfiguration(){
-  if(process.env.DB_ENCRYPTION_REQUIRED === "true"){
-    throw new Error("DB_ENCRYPTION_REQUIRED=true is not supported by this first-pass SQLite build; integrate SQLCipher or field-level envelope encryption before storing sensitive account/OAuth fields.");
+function envValue(env, name){
+  return typeof env[name] === "string" ? env[name].trim() : "";
+}
+
+function isProduction(env = process.env){
+  return env.NODE_ENV === "production";
+}
+
+export function validateAtRestEncryptionSettings(env = process.env){
+  const issues = [];
+
+  if(!isProduction(env)){
+    return { ok: true, issues };
+  }
+
+  const approach = envValue(env, "DB_AT_REST_ENCRYPTION");
+  if(approach !== APPROVED_AT_REST_APPROACH){
+    issues.push({
+      variable: "DB_AT_REST_ENCRYPTION",
+      feature: "SQLite data-at-rest protection",
+      message: `DB_AT_REST_ENCRYPTION must be set to ${APPROVED_AT_REST_APPROACH} in production. SQLCipher/field-level envelope encryption is not enabled in this build.`
+    });
+  }
+
+  if(envValue(env, "STORAGE_ENCRYPTION_AT_REST").toLowerCase() !== "true"){
+    issues.push({
+      variable: "STORAGE_ENCRYPTION_AT_REST",
+      feature: "managed encrypted storage attestation",
+      message: "STORAGE_ENCRYPTION_AT_REST=true is required to attest that the database volume, SQLite sidecar files, snapshots, and backups are encrypted at rest."
+    });
+  }
+
+  if(!envValue(env, "STORAGE_ENCRYPTION_PROVIDER")){
+    issues.push({
+      variable: "STORAGE_ENCRYPTION_PROVIDER",
+      feature: "managed encrypted storage attestation",
+      message: "Name the managed storage provider/control that encrypts the DATABASE_PATH volume and backups, for example an encrypted cloud block volume with encrypted snapshots."
+    });
+  }
+
+  if(!envValue(env, "STORAGE_ENCRYPTION_EVIDENCE")){
+    issues.push({
+      variable: "STORAGE_ENCRYPTION_EVIDENCE",
+      feature: "managed encrypted storage attestation",
+      message: "Document the compliance evidence for the encrypted storage guarantee, such as a policy URL, control ID, ticket, or runbook section reviewed for this deployment."
+    });
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+function assertAtRestEncryptionConfiguration(env = process.env){
+  const result = validateAtRestEncryptionSettings(env);
+  if(!result.ok){
+    const details = result.issues.map(issue => `${issue.variable}: ${issue.message}`).join("; ");
+    throw new Error(`SQLite at-rest encryption validation failed: ${details}`);
   }
 }
 

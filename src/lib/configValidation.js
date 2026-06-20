@@ -1,3 +1,5 @@
+import { validateAtRestEncryptionSettings } from "../db/db.js";
+
 export const OPTIONAL_ENVIRONMENT_CONFIG = [
   {
     name: "GOOGLE_ALLOWED_EMAILS",
@@ -87,6 +89,9 @@ export function validateStartupConfig(env = process.env){
     if(issues.length > 0) throw startupConfigError(issues);
     return { ok: true, issues: [] };
   }
+
+  const atRestResult = validateAtRestEncryptionSettings(env);
+  issues.push(...atRestResult.issues);
 
   for(const required of PRODUCTION_REQUIRED_CONFIG){
     if(!hasEnv(env, required.name)){
