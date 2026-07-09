@@ -174,6 +174,17 @@ describe("validateStartupConfig", () => {
   });
 });
 
+describe("map database route", () => {
+  it("falls back to the default anchor for a missing requested anchor", async () => {
+    const res = await request("/map/database?anchor_id=missing-anchor");
+    assert.equal(res.status, 200);
+    const body = await json(res);
+    assert.equal(body.map_database.active_anchor_id, "dyson-sphere-ring-1");
+    assert.equal(body.map_database.authentication_status, "fallback_anchor_active");
+    assert.equal(body.map_database.tick_rate_hz, 1);
+  });
+});
+
 describe("session lifecycle routes", () => {
   it("creates, starts, heartbeats, stops, summarizes, and closes a session via API key", async () => {
     const createRes = await request("/sessions", { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ seat_id: "seat-route" }) });

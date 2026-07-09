@@ -131,11 +131,9 @@
         <section class="panel status-box" aria-live="polite">
           <h2>Map Database Anchor</h2>
           <p class="status-line" id="mapAuthStatus">Checking map database…</p>
-          <p class="muted"><strong>Anchor:</strong> <span id="mapAnchorId">—</span></p>
-          <p class="muted"><strong>Map:</strong> <span id="mapLabel">—</span></p>
-          <p class="muted"><strong>Business:</strong> <span id="mapBusiness">—</span></p>
-          <p class="muted"><strong>Owner / Executive Director:</strong> <span id="mapOwner">—</span></p>
-          <p class="muted"><a id="mapImageLink" href="#" target="_blank" rel="noreferrer">Open physical map image</a></p>
+          <p class="muted"><strong>Active anchor ID:</strong> <span id="mapAnchorId">—</span></p>
+          <p class="muted"><strong>Status:</strong> <span id="mapStatus">—</span></p>
+          <p class="muted"><strong>Tick rate:</strong> <span id="mapTickRate">—</span></p>
         </section>
       </div>
 
@@ -191,15 +189,8 @@
         ? "Map database active"
         : (map.authentication_status || "Map database unavailable");
       $("mapAnchorId").textContent = map.active_anchor_id || "—";
-      $("mapLabel").textContent = map.map_label || "—";
-      $("mapBusiness").textContent = map.business_association || "—";
-      $("mapOwner").textContent = map.owner_executive_director || "—";
-      if(map.physical_map_image_url){
-        $("mapImageLink").href = map.physical_map_image_url;
-        $("mapImageLink").hidden = false;
-      }else{
-        $("mapImageLink").hidden = true;
-      }
+      $("mapStatus").textContent = map.authentication_status || "—";
+      $("mapTickRate").textContent = map.tick_rate_hz ? `${map.tick_rate_hz} Hz` : "—";
     }
 
     async function loadMapDatabaseStatus(){
