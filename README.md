@@ -44,7 +44,7 @@ export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
 export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
-export TRUST_PROXY=true
+export TRUST_PROXY=1
 # Build the image, run exactly one idempotent migration job, then start the API.
 docker compose build api
 docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
@@ -249,7 +249,7 @@ PUBLIC_BASE_URL=https://<metering-subdomain-or-path>.SynapticSystems.ca
 CORS_ORIGINS=https://SynapticSystems.ca,https://www.SynapticSystems.ca,<metering-origin>
 GOOGLE_REDIRECT_URI=https://<metering-origin>/auth/google/callback
 COOKIE_SECURE=true
-TRUST_PROXY=true
+TRUST_PROXY=1
 NODE_ENV=production
 DB_AT_REST_ENCRYPTION=managed-encrypted-storage
 STORAGE_ENCRYPTION_AT_REST=true
@@ -269,7 +269,7 @@ The app exposes search-engine discovery files at the deployment root:
 - `GET /robots.txt` allows crawling and points crawlers at the sitemap.
 - `GET /sitemap.xml` lists the public deployment URLs for `/`, `/console`, `/genesis`, `/map/dyson-sphere-ring-1`, and `/public/dyson-sphere-ring-1-map.svg`.
 
-Set `PUBLIC_BASE_URL` to the exact public `https://` base URL before deployment so generated discovery URLs match the crawlable site. If `PUBLIC_BASE_URL` is not set, the server derives the base URL from the incoming request host and protocol, which is useful for local checks but should not be relied on behind production proxies unless `TRUST_PROXY=true` and forwarded headers are correct. Keep `/console` in the sitemap only while the console is intended to be a public entry point; remove it from `src/server.js` if the console becomes private.
+Set `PUBLIC_BASE_URL` to the exact public `https://` base URL before deployment so generated discovery URLs match the crawlable site. If `PUBLIC_BASE_URL` is not set, the server derives the base URL from the incoming request host and protocol, which is useful for local checks but should not be relied on behind production proxies unless `TRUST_PROXY=1` and forwarded headers are correct. Keep `/console` in the sitemap only while the console is intended to be a public entry point; remove it from `src/server.js` if the console becomes private.
 
 Example verification after deployment:
 
@@ -330,6 +330,60 @@ STORAGE_ENCRYPTION_EVIDENCE=<provider-doc-runbook-or-ticket>
 ```
 
 
+## Vercel deployment
+
+This repository includes a Vercel serverless adapter:
+
+- `api/index.js` imports the Express app from `src/server.js` and exports it as the Vercel function handler.
+- `vercel.json` routes all requests to that function and pins the Node.js runtime to 20.x, matching `package.json`.
+- `SERVERLESS=true` prevents the app from calling `app.listen()` inside Vercel.
+
+Required Vercel environment variables:
+
+```text
+SERVERLESS=true
+PUBLIC_BASE_URL=https://<your-vercel-domain-or-custom-domain>
+TRUST_PROXY=1
+CORS_ORIGINS=https://<allowed-browser-origin>
+GOOGLE_CLIENT_ID=<google-oauth-client-id>
+GOOGLE_CLIENT_SECRET=<google-oauth-client-secret>
+API_KEY_DIGESTS=<comma-separated-sha256-api-key-digests>
+API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
+DB_AT_REST_ENCRYPTION=managed-encrypted-storage
+STORAGE_ENCRYPTION_AT_REST=true
+STORAGE_ENCRYPTION_PROVIDER=<durable-database-storage-control>
+STORAGE_ENCRYPTION_EVIDENCE=<provider-doc-runbook-control-or-ticket>
+```
+
+Google OAuth callback URL:
+
+```text
+https://<your-vercel-domain-or-custom-domain>/auth/google/callback
+```
+
+### Vercel database requirement
+
+Vercel Functions do not provide a durable writable local filesystem for SQLite database files. For production billing/session data, do **not** use `/tmp` or any deployment-bundle path as `DATABASE_PATH`; use a durable external database/storage adapter or deploy this service to the Docker target with an encrypted persistent volume.
+
+For disposable Vercel preview deployments only, you can acknowledge ephemeral SQLite storage:
+
+```text
+VERCEL_EPHEMERAL_SQLITE_ACK=true
+```
+
+When that acknowledgement is set and `DATABASE_PATH` is omitted, the app uses `/tmp/synaptic-metering/app.db`. This is useful only for smoke testing because data can be lost on cold starts, redeploys, and function recycling.
+
+### Vercel migration workflow
+
+Run migrations before sending traffic to a Vercel deployment whenever the selected database is empty or schema changes are introduced. For the disposable preview SQLite mode, run the migration command with the same environment variables used by the function:
+
+```bash
+SERVERLESS=true VERCEL=1 VERCEL_EPHEMERAL_SQLITE_ACK=true npm run migrate
+```
+
+For production, run migrations against the durable database in CI/CD or a controlled one-shot administrative job before promoting the Vercel deployment. Do not run migrations automatically on every serverless invocation because concurrent cold starts can race.
+
+
 ## Observability and alerts
 
 Every response includes an `X-Request-ID` header. Clients may provide `X-Request-ID` or `X-Correlation-ID`; otherwise the API generates a `req_...` identifier. JSON error responses include the same `request_id` so platform logs, client reports, and support tickets can be correlated.
@@ -357,7 +411,7 @@ Expected production alerts:
 - **Invoice verification failures:** alert when imported invoices produce `audit_event="invoice_import"` with `status="rejected"` or verification reasons such as `invoice_account_mismatch` / `session_account_mismatch`; page immediately if failures affect multiple accounts or exceed 5 in 15 minutes.
 
 ## Production Notes
-- Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=true` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
+- Put this behind HTTPS (Cloudflare / Nginx / Caddy). The API enforces HTTPS when `NODE_ENV=production`; set `TRUST_PROXY=1` when TLS terminates at a reverse proxy that forwards `X-Forwarded-Proto: https`.
 - Set `CORS_ORIGINS` to a comma-separated allowlist of exact browser origins that may call the API. Avoid wildcard origins in production.
 - Rotate API keys, one per client, and keep only their SHA-256 digests in `API_KEY_DIGESTS`. Generate digests with `printf %s "$API_KEY" | sha256sum | awk '{print $1}'`.
 - If you need multi-tenant billing, use `account_id` and `seat_id` fields (already supported in schema).
@@ -399,7 +453,7 @@ export API_KEY_DIGESTS=$(printf %s "$API_KEY" | sha256sum | awk '{print $1}')
 export API_KEY_SCOPES=admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write
 export CORS_ORIGINS=https://metering.example.com
 export PUBLIC_BASE_URL=https://metering.example.com
-export TRUST_PROXY=true
+export TRUST_PROXY=1
 docker compose build api
 docker compose run --rm -e RUN_MIGRATIONS=false api npm run migrate
 docker compose up -d
@@ -449,7 +503,7 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 
 ### Transport encryption
 - TLS is required for production deployments. Run the Node service behind a TLS-terminating proxy or load balancer and set `NODE_ENV=production`.
-- Set `TRUST_PROXY=true` only when the proxy is trusted and configured to pass `X-Forwarded-Proto`; production HTTP requests without `https` are rejected with `https_required`.
+- Set `TRUST_PROXY=1` only when the proxy is trusted and configured to pass `X-Forwarded-Proto`; production HTTP requests without `https` are rejected with `https_required`.
 - Set `PUBLIC_BASE_URL` to the public `https://` origin clients should use.
 
 ### API keys and rotation

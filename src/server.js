@@ -177,10 +177,11 @@ function corsOptions(){
 
 function trustProxyValue(){
   const value = (process.env.TRUST_PROXY || "").trim().toLowerCase();
-  if(["1", "true", "yes"].includes(value)) return true;
-  if(["0", "false", "no", ""].includes(value)) return false;
+  if(["true", "yes"].includes(value)) return true;
+  if(["false", "no", ""].includes(value)) return false;
   const numeric = Number(value);
-  return Number.isInteger(numeric) && numeric >= 0 ? numeric : value;
+  if(Number.isInteger(numeric) && numeric >= 0) return numeric;
+  return value;
 }
 
 const trustProxySetting = trustProxyValue();
