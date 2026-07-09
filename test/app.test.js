@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { computeSessionSummary } from "../src/lib/billing.js";
 import { verifyInvoiceForAccount } from "../src/lib/invoiceVerification.js";
 import { validateStartupConfig } from "../src/lib/configValidation.js";
+import { ANCHORED_ASSET_MAP, mapDatabaseStatus, resolveAnchoredAsset } from "../src/lib/anchoredIntelligence.js";
 
 const tempDir = mkdtempSync(path.join(tmpdir(), "synaptic-metering-test-"));
 const databasePath = path.join(tempDir, "test.sqlite");
@@ -152,6 +153,23 @@ describe("verifyInvoiceForAccount", () => {
       accountId: "acct_user",
       payload: { account_id: "acct_user", session_id: otherSessionId }
     }).reason, "session_account_mismatch");
+  });
+});
+
+describe("anchored intelligence defaults", () => {
+  it("keeps dyson-sphere-ring-1 as the single default map database anchor", () => {
+    const asset = resolveAnchoredAsset(null);
+
+    assert.equal(asset.id, "dyson-sphere-ring-1");
+    assert.equal(Object.keys(ANCHORED_ASSET_MAP).filter(id => id === "dyson-sphere-ring-1").length, 1);
+    assert.equal(asset.tick_rate_hz, 1);
+    assert.equal(asset.permanence, "permanent_anchor");
+    assert.equal(asset.physics_role, "map_database_reference_anchor");
+    assert.equal(asset.metadata.structure_label, "Dyson-Sphere");
+    assert.equal(asset.metadata.anchor_path, "Home-Room/LightBulb-2-Map_Database/Star_Anchor");
+    assert.equal(resolveAnchoredAsset(null, "missing-anchor").id, "dyson-sphere-ring-1");
+    assert.equal(mapDatabaseStatus().active_anchor_id, "dyson-sphere-ring-1");
+    assert.equal(mapDatabaseStatus({ anchorId: "missing-anchor" }).active_anchor_id, "dyson-sphere-ring-1");
   });
 });
 
