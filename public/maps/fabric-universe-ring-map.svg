@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Fabric Universe Map Anchor</title>
+  <desc id="desc">Static browser-safe reference map asset for the fabric universe anchor.</desc>
+  <rect width="960" height="540" fill="#08111f"/>
+  <g fill="none" stroke="#243b64" stroke-width="1.4" opacity="0.72">
+    <path d="M80 118 C240 52 404 84 528 146 C648 206 778 216 880 154"/>
+    <path d="M80 208 C232 142 396 172 528 232 C650 286 770 302 880 244"/>
+    <path d="M80 298 C232 236 398 266 528 322 C652 376 774 392 880 334"/>
+    <path d="M80 388 C244 326 402 356 528 410 C650 462 780 480 880 424"/>
+    <path d="M150 70 C116 190 118 324 156 470"/>
+    <path d="M300 64 C264 184 264 328 306 476"/>
+    <path d="M480 66 C448 184 448 330 486 478"/>
+    <path d="M660 72 C628 190 630 328 668 470"/>
+    <path d="M810 80 C784 194 786 326 814 460"/>
+  </g>
+  <circle cx="480" cy="270" r="110" fill="none" stroke="#76e4ff" stroke-width="4"/>
+  <circle cx="480" cy="270" r="72" fill="none" stroke="#d8b4fe" stroke-width="2.5" stroke-dasharray="8 10"/>
+  <circle cx="480" cy="270" r="10" fill="#ffffff"/>
+  <g fill="#9ff6d8">
+    <circle cx="248" cy="174" r="5"/><circle cx="344" cy="348" r="4"/><circle cx="614" cy="186" r="4"/><circle cx="706" cy="360" r="5"/>
+  </g>
+  <g stroke="#9ff6d8" stroke-width="1.5" opacity="0.75">
+    <path d="M248 174 L480 270 L614 186"/>
+    <path d="M344 348 L480 270 L706 360"/>
+  </g>
+  <text x="48" y="64" fill="#e8f3ff" font-family="system-ui,Segoe UI,Arial" font-size="30" font-weight="700">Fabric Universe Map Anchor</text>
+  <text x="48" y="100" fill="#a9bdd8" font-family="system-ui,Segoe UI,Arial" font-size="16">fabric-universe-ring-map</text>
+</svg>

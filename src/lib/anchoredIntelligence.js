@@ -161,6 +161,11 @@ export const MAP_DATABASE_METADATA = Object.freeze({
     business_association: "Synaptics.Systems deployment operations",
     owner_executive_director: "Synaptics.Systems Executive Director",
     physical_map_image_url: "/public/dyson-sphere-ring-1-map.svg"
+  },
+  "fabric-universe-ring-map": {
+    business_association: "Synaptics.Systems deployment operations",
+    owner_executive_director: "Synaptics.Systems Executive Director",
+    physical_map_image_url: "/public/maps/fabric-universe-ring-map.svg"
   }
 });
 
