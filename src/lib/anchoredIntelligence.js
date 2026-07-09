@@ -62,6 +62,16 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     physics_role: "map_database_reference_anchor",
     tick_rate_hz: 1,
     vector: "ring_1_physical_map_reference"
+  },
+  "fabric-universe-ring-map": {
+    id: "fabric-universe-ring-map",
+    label: "Fabric Universe Map Anchor",
+    asset_type: "fabric_universe_map",
+    permanence: "permanent_anchor",
+    role: "deterministic_metering_anchor",
+    physics_role: "map_database_reference_anchor",
+    tick_rate_hz: 1,
+    vector: "fabric_universe_reference"
   }
 });
 
@@ -171,6 +181,11 @@ export const MAP_DATABASE_METADATA = Object.freeze({
     business_association: "Synaptics.Systems deployment operations",
     owner_executive_director: "Synaptics.Systems Executive Director",
     physical_map_image_url: "/public/dyson-sphere-ring-1-map.svg"
+  },
+  "fabric-universe-ring-map": {
+    business_association: "Synaptics.Systems deployment operations",
+    owner_executive_director: "Synaptics.Systems Executive Director",
+    physical_map_image_url: "/public/maps/fabric-universe-ring-map.svg"
   }
 });
 

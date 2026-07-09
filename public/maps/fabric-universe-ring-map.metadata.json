@@ -1,0 +1,9 @@
+{
+  "schema": "synaptics.map.v1",
+  "map_id": "fabric-universe-ring-map",
+  "canonical": true,
+  "label": "Fabric Universe Map Anchor",
+  "asset_type": "fabric_universe_map",
+  "authentication": "server-seeded-canonical-asset",
+  "visual_asset_path": "/public/maps/fabric-universe-ring-map.svg"
+}
