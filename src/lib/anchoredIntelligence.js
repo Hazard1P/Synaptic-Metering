@@ -213,6 +213,7 @@ export function mapDatabaseStatus({ db = null, anchorId = "dyson-sphere-ring-1",
 
   return {
     active_anchor_id: asset.id,
+    tick_rate_hz: asset.tick_rate_hz,
     map_label: asset.label,
     business_association: metadata.business_association,
     owner_executive_director: metadata.owner_executive_director,

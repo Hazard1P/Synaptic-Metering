@@ -241,7 +241,7 @@
     </div>
 
     <div class="card">
-      <h2>Dyson-Sphere Ring-1 Anchor</h2>
+      <h2>Map Database Anchor</h2>
       <div class="row">
         <button id="btnMapDatabase" type="button">Refresh map database</button>
         <span class="status" id="mapStatus">Checking map database...</span>
@@ -249,15 +249,8 @@
       <div style="height:10px"></div>
       <div class="grid2">
         <div class="kpi"><div class="v" id="mapAnchorId">—</div><div class="l">Active anchor ID</div></div>
-        <div class="kpi"><div class="v" id="mapAuthState">—</div><div class="l">Authentication status</div></div>
-        <div class="kpi"><div class="v" id="mapLabel">—</div><div class="l">Map label</div></div>
-        <div class="kpi"><div class="v" id="mapBusiness">—</div><div class="l">Business association</div></div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="row">
-        <span class="pill">Owner / Executive Director</span>
-        <span class="status" id="mapOwner">—</span>
-        <a class="pill" id="mapImageLink" href="#" target="_blank" rel="noreferrer">Open physical map image</a>
+        <div class="kpi"><div class="v" id="mapAuthState">—</div><div class="l">Status</div></div>
+        <div class="kpi"><div class="v" id="mapTickRate">—</div><div class="l">Tick rate</div></div>
       </div>
     </div>
 
@@ -351,15 +344,7 @@
       : (map.authentication_status || "Map database unavailable");
     $("mapAnchorId").textContent = map.active_anchor_id || "—";
     $("mapAuthState").textContent = map.authentication_status || "—";
-    $("mapLabel").textContent = map.map_label || "—";
-    $("mapBusiness").textContent = map.business_association || "—";
-    $("mapOwner").textContent = map.owner_executive_director || "—";
-    if(map.physical_map_image_url){
-      $("mapImageLink").href = map.physical_map_image_url;
-      $("mapImageLink").style.display = "inline-flex";
-    }else{
-      $("mapImageLink").style.display = "none";
-    }
+    $("mapTickRate").textContent = map.tick_rate_hz ? `${map.tick_rate_hz} Hz` : "—";
   }
 
   async function refreshMapDatabase(){
