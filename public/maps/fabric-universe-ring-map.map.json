@@ -1,0 +1,6 @@
+{
+  "map_id": "fabric-universe-ring-map",
+  "title": "Fabric Universe Map Anchor",
+  "anchor_asset_id": "fabric-universe-ring-map",
+  "systems": ["fabric-universe-primary", "fabric-universe-north-relay", "fabric-universe-south-relay"]
+}

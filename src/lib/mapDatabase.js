@@ -47,6 +47,49 @@ export const CANONICAL_DYSON_MAP = Object.freeze({
   ])
 });
 
+export const CANONICAL_FABRIC_UNIVERSE_MAP_ID = "fabric-universe-ring-map";
+export const CANONICAL_FABRIC_UNIVERSE_MAP = Object.freeze({
+  map_id: CANONICAL_FABRIC_UNIVERSE_MAP_ID,
+  anchor_asset_id: CANONICAL_FABRIC_UNIVERSE_MAP_ID,
+  digest: sha256ForRelativePath("public/maps/fabric-universe-ring-map.map.json"),
+  metadata_json: JSON.stringify({
+    id: CANONICAL_FABRIC_UNIVERSE_MAP_ID,
+    label: "Fabric Universe Map Anchor",
+    asset_type: "fabric_universe_map",
+    permanence: "permanent_anchor",
+    role: "deterministic_metering_anchor",
+    physics_role: "map_database_reference_anchor",
+    tick_rate_hz: 1,
+    vector: "fabric_universe_reference"
+  }),
+  star_systems: Object.freeze([
+    {
+      system_id: "fabric-universe-primary",
+      name: "Fabric Universe Primary",
+      role: "anchor_star",
+      sector: "fabric-core",
+      ordinal: 1,
+      coordinates_json: JSON.stringify({ x: 0, y: 0, z: 0 })
+    },
+    {
+      system_id: "fabric-universe-north-relay",
+      name: "Fabric Universe North Relay",
+      role: "metering_relay",
+      sector: "fabric-north",
+      ordinal: 2,
+      coordinates_json: JSON.stringify({ x: 0, y: 1, z: 0 })
+    },
+    {
+      system_id: "fabric-universe-south-relay",
+      name: "Fabric Universe South Relay",
+      role: "metering_relay",
+      sector: "fabric-south",
+      ordinal: 3,
+      coordinates_json: JSON.stringify({ x: 0, y: -1, z: 0 })
+    }
+  ])
+});
+
 export function mapRecordSchema(){
   return {
     map_id: "TEXT PRIMARY KEY",
