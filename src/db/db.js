@@ -79,9 +79,17 @@ function isServerless(){
   return process.env.SERVERLESS === "true";
 }
 
+function isVercel(){
+  return process.env.VERCEL === "1" || process.env.VERCEL === "true";
+}
+
+function allowEphemeralVercelSqlite(){
+  return isVercel() && process.env.VERCEL_EPHEMERAL_SQLITE_ACK === "true";
+}
+
 function assertWritableDirectory(dir, envName){
   if(!fs.existsSync(dir)){
-    if(isServerless()){
+    if(isServerless() && !(allowEphemeralVercelSqlite() && dir.startsWith("/tmp/"))){
       throw new Error(`${envName} parent directory does not exist: ${dir}. In serverless mode, mount a writable volume first and point DATABASE_PATH at a file inside it.`);
     }
     fs.mkdirSync(dir, { recursive: true });
@@ -107,7 +115,10 @@ function resolveDatabasePath(){
   // explicit DATABASE_PATH so operators must point SQLite at a mounted,
   // writable, persistent volume such as /mnt/data/app.db.
   if(isServerless() && !configuredPath){
-    throw new Error("SERVERLESS=true requires DATABASE_PATH to point to a SQLite file on a writable mounted volume, for example /mnt/data/app.db.");
+    if(allowEphemeralVercelSqlite()){
+      return "/tmp/synaptic-metering/app.db";
+    }
+    throw new Error("SERVERLESS=true requires DATABASE_PATH to point to a SQLite file on a writable mounted volume, for example /mnt/data/app.db. On Vercel, local SQLite is not durable; use an external database adapter or set VERCEL_EPHEMERAL_SQLITE_ACK=true only for disposable preview deployments.");
   }
 
   if(isServerless() && !path.isAbsolute(configuredPath)){
