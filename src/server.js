@@ -192,10 +192,15 @@ function corsOptions(){
   };
 }
 
+function isVercelRuntime(){
+  return process.env.VERCEL === "1" || process.env.VERCEL === "true";
+}
+
 function trustProxyValue(){
   const value = (process.env.TRUST_PROXY || "").trim().toLowerCase();
   if(["true", "yes"].includes(value)) return true;
-  if(["false", "no", ""].includes(value)) return false;
+  if(["false", "no"].includes(value)) return false;
+  if(value === "") return isVercelRuntime() ? 1 : false;
   const numeric = Number(value);
   if(Number.isInteger(numeric) && numeric >= 0) return numeric;
   return value;
