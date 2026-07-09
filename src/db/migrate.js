@@ -313,7 +313,7 @@ const seedApiKeyDigests = (process.env.API_KEY_DIGESTS || "")
   .split(",")
   .map(digest => digest.trim().toLowerCase())
   .filter(digest => /^[a-f0-9]{64}$/.test(digest));
-const seedApiKeyScopes = (process.env.API_KEY_SCOPES || "catalog:read,sessions:write,telemetry:write,intelligence:read")
+const seedApiKeyScopes = (process.env.API_KEY_SCOPES || "admin:read,admin:write,reports:read,project:read,catalog:read,catalog:write,intelligence:read,intelligence:write,sessions:write,telemetry:write")
   .split(",")
   .map(scope => scope.trim())
   .filter(Boolean);
