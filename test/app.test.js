@@ -187,6 +187,32 @@ describe("validateStartupConfig", () => {
     });
   });
 
+
+  it("trusts Vercel forwarded HTTPS in production", () => {
+    const script = `
+      process.env.NODE_ENV = "production";
+      process.env.SERVERLESS = "true";
+      process.env.VERCEL = "1";
+      process.env.VERCEL_EPHEMERAL_SQLITE_ACK = "true";
+      process.env.DATABASE_PATH = "/tmp/synaptic-metering-forwarded-https-test.sqlite";
+      const { app } = await import("./src/server.js");
+      const server = app.listen(0, async () => {
+        try{
+          const port = server.address().port;
+          const response = await fetch(` + '`http://127.0.0.1:${port}/health`' + `, { headers: { "x-forwarded-proto": "https" } });
+          console.log(response.status);
+        }finally{
+          server.close();
+        }
+      });
+    `;
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: path.resolve(import.meta.dirname, ".."),
+      env: { ...process.env },
+      encoding: "utf8"
+    });
+    assert.match(output, /200/);
+  });
   it("rejects malformed optional email allowlists", () => {
     assert.throws(() => validateStartupConfig({ NODE_ENV: "test", ADMIN_GOOGLE_EMAILS: "not-an-email" }), /ADMIN_GOOGLE_EMAILS/);
   });

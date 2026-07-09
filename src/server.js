@@ -25,7 +25,24 @@ import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterK
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
 
-validateStartupConfig();
+let startupConfigStatus = { ok: true, issues: [] };
+try{
+  startupConfigStatus = validateStartupConfig();
+}catch(e){
+  startupConfigStatus = { ok: false, issues: e?.issues || [], error: e?.message || "startup_config_invalid" };
+  if(process.env.NODE_ENV === "production"){
+    console.warn(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: "warn",
+      event: "startup_config_degraded",
+      service: "synaptics-seconds-api",
+      error: startupConfigStatus.error,
+      issues: startupConfigStatus.issues
+    }));
+  }else{
+    throw e;
+  }
+}
 
 const app = express();
 let dbInstance;
@@ -175,10 +192,15 @@ function corsOptions(){
   };
 }
 
+function isVercelRuntime(){
+  return process.env.VERCEL === "1" || process.env.VERCEL === "true";
+}
+
 function trustProxyValue(){
   const value = (process.env.TRUST_PROXY || "").trim().toLowerCase();
   if(["true", "yes"].includes(value)) return true;
-  if(["false", "no", ""].includes(value)) return false;
+  if(["false", "no"].includes(value)) return false;
+  if(value === "") return isVercelRuntime() ? 1 : false;
   const numeric = Number(value);
   if(Number.isInteger(numeric) && numeric >= 0) return numeric;
   return value;
@@ -252,6 +274,8 @@ import fs from "fs";
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
+const PUBLIC_ROOT = path.join(PROJECT_ROOT, "public");
+const TEMPLATES_ROOT = path.join(PROJECT_ROOT, "templates");
 const PROJECT_SEARCH_MIN_QUERY_LENGTH = 2;
 const PROJECT_SEARCH_MAX_RESULTS = 50;
 const PROJECT_SEARCH_MAX_FILE_SIZE_BYTES = 512 * 1024;
@@ -368,16 +392,16 @@ app.get("/sitemap.xml", (req,res)=>{
   res.type("application/xml").send(sitemapXml(req));
 });
 
-app.use("/public", express.static(path.join(__dirname, "..", "public")));
-app.use("/templates", express.static(path.join(__dirname, "..", "templates")));
+app.use("/public", express.static(PUBLIC_ROOT));
+app.use("/templates", express.static(TEMPLATES_ROOT));
 app.get("/console", (req,res)=>{
-  const p = path.join(__dirname, "public", "console.html");
+  const p = path.join(PUBLIC_ROOT, "console.html");
   if(fs.existsSync(p)) return res.type("html").send(fs.readFileSync(p, "utf-8"));
   res.type("text").send("Console not found");
 });
 
 app.get("/", (req,res)=>{
-  const p = path.join(__dirname, "public", "index.html");
+  const p = path.join(PUBLIC_ROOT, "index.html");
   // if packaged differently, fall back to a minimal text response
   if(fs.existsSync(p)) return res.type("html").send(fs.readFileSync(p, "utf-8"));
   res.type("text").send("Synaptics.Systems Seconds Metering API");
@@ -385,7 +409,7 @@ app.get("/", (req,res)=>{
 
 
 app.get("/genesis", (req,res)=>{
-  const p = path.join(__dirname, "..", "public", "genesis-integrated.html");
+  const p = path.join(PUBLIC_ROOT, "genesis-integrated.html");
   if(fs.existsSync(p)) return res.type("html").send(fs.readFileSync(p, "utf-8"));
   res.status(404).type("text").send("Genesis page not found");
 });
@@ -449,7 +473,7 @@ function inspectRequiredSchema(){
 }
 
 // --- health/readiness (public)
-app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", ts:new Date().toISOString() }));
+app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", startup_config_ok: startupConfigStatus.ok, ts:new Date().toISOString() }));
 app.get("/ready", (req,res)=>{
   const readiness = dbReady();
   res.status(readiness.ok ? 200 : 503).json({ ...readiness, service:"synaptics-seconds-api", ts:new Date().toISOString() });
