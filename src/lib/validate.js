@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANCHORED_ASSET_MAP } from "./anchoredIntelligence.js";
 
 export const CreateSessionBody = z.object({
   seat_id: z.string().min(1).max(80).optional(),
@@ -18,6 +19,8 @@ export const HeartbeatBody = z.object({
   anchor_id: z.string().min(1).max(120).default("dyson-sphere-ring-1")
 }).strict();
 
+
+const ANCHORED_ASSET_IDS = Object.freeze(Object.keys(ANCHORED_ASSET_MAP));
 
 export const MasterKeyBody = z.object({
   key_label: z.string().min(1).max(240),

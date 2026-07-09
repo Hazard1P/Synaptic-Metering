@@ -34,6 +34,16 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     tick_rate_hz: 1,
     vector: "non_extractive_gravity_reference"
   },
+  "fabric-universe-ring-map": {
+    id: "fabric-universe-ring-map",
+    label: "Fabric Universe Ring deterministic map anchor",
+    asset_type: "deterministic_map_anchor",
+    permanence: "permanent_anchor",
+    role: "operator_map_database",
+    physics_role: "deterministic_ring_map_reference_anchor",
+    tick_rate_hz: 1,
+    vector: "fabric_universe_ring_map_reference"
+  },
   "dyson-sphere-ring-1": {
     id: "dyson-sphere-ring-1",
     label: "Dyson-Sphere Ring-1 map database",

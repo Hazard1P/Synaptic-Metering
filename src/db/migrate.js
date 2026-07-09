@@ -351,7 +351,8 @@ db.prepare(`
     ('fabric-universe-ring-map', 'Fabric Universe Map Anchor', 'fabric_universe_map', 'permanent_anchor', 'deterministic_metering_anchor', 'map_database_reference_anchor', 1, 'fabric_universe_reference'),
     ('major-ursa', 'Major Ursa anchored star/database', 'constellation_database', 'permanent_anchor', 'governance_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'tip_to_dipper_epoch_unix_discrepancy'),
     ('cassiopeia', 'Cassiopeia quantum biometrics anchor', 'constellation_biometrics', 'permanent_anchor', 'quantum_biometric_moderation', 'considered_in_data_and_physics_not_pulled_through', 1, 'relative_anchored_star_biometrics'),
-    ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference')
+    ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference'),
+    ('fabric-universe-ring-map', 'Fabric Universe Ring deterministic map anchor', 'deterministic_map_anchor', 'permanent_anchor', 'operator_map_database', 'deterministic_ring_map_reference_anchor', 1, 'fabric_universe_ring_map_reference')
 `).run();
 
 // Keep the physical map database anchor canonical even when migrating a
