@@ -3,16 +3,13 @@
   "functions": {
     "api/index.js": {
       "runtime": "nodejs20.x",
-      "includeFiles": [
-        "src/**",
-        "public/**",
-        "templates/**",
-        "Invoice.html",
-        "package.json"
-      ]
+      "includeFiles": "{src/**,public/**,templates/**,Invoice.html,package.json}"
     }
   },
   "routes": [
-    { "src": "/(.*)", "dest": "/api/index.js" }
+    {
+      "src": "/(.*)",
+      "dest": "/api/index.js"
+    }
   ]
 }
