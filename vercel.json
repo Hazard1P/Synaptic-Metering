@@ -2,7 +2,6 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "runtime": "nodejs20.x",
       "includeFiles": "{src/**,public/**,templates/**,Invoice.html,package.json}"
     }
   },

@@ -335,7 +335,7 @@ STORAGE_ENCRYPTION_EVIDENCE=<provider-doc-runbook-or-ticket>
 This repository includes a Vercel serverless adapter:
 
 - `api/index.js` imports the Express app from `src/server.js` and exports it as the Vercel function handler.
-- `vercel.json` routes all requests to that function and pins the Node.js runtime to 20.x, matching `package.json`.
+- `vercel.json` routes all requests to that function and relies on the Node.js 20.x engine declared in `package.json`.
 - `SERVERLESS=true` prevents the app from calling `app.listen()` inside Vercel.
 
 Required Vercel environment variables:
