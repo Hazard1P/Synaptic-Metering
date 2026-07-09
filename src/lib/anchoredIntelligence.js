@@ -3,26 +3,6 @@ import { loadMapDatabaseByAnchorId } from "./mapDatabase.js";
 const FIVE_DAY_EPOCH_SECONDS = 5 * 24 * 60 * 60;
 
 export const ANCHORED_ASSET_MAP = Object.freeze({
-  "dyson-sphere-ring-1": {
-    id: "dyson-sphere-ring-1",
-    label: "Dyson-Sphere 3_ring_Dyson-Sphere Ring-1 anchor",
-    asset_type: "Dyson-Sphere",
-    permanence: "permanent_anchor",
-    role: "Business-Association",
-    physics_role: "Home-Room/LightBulb-2-Map_Database/Star_Anchor",
-    tick_rate_hz: 1,
-    vector: "techneqly_central_synaptic_intelligence_systems_ring_1",
-    metadata: Object.freeze({
-      structure_label: "Dyson-Sphere",
-      ring_system_label: "3_ring_Dyson-Sphere",
-      ring_label: "Ring-1",
-      organization: "techneqly",
-      association_type: "Business-Association",
-      system_label: "Central_Synaptic_Intelligence_Systems",
-      owner_executive_director: "Owner/Executive-Director: Michael_Rybaltowicz",
-      anchor_path: "Home-Room/LightBulb-2-Map_Database/Star_Anchor"
-    })
-  },
   "major-ursa": {
     id: "major-ursa",
     label: "Major Ursa anchored star/database",
@@ -61,17 +41,17 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     role: "operator_map_database",
     physics_role: "map_database_reference_anchor",
     tick_rate_hz: 1,
-    vector: "ring_1_physical_map_reference"
-  },
-  "fabric-universe-ring-map": {
-    id: "fabric-universe-ring-map",
-    label: "Fabric Universe Map Anchor",
-    asset_type: "fabric_universe_map",
-    permanence: "permanent_anchor",
-    role: "deterministic_metering_anchor",
-    physics_role: "map_database_reference_anchor",
-    tick_rate_hz: 1,
-    vector: "fabric_universe_reference"
+    vector: "ring_1_physical_map_reference",
+    metadata: Object.freeze({
+      structure_label: "Dyson-Sphere",
+      ring_system_label: "3_ring_Dyson-Sphere",
+      ring_label: "Ring-1",
+      organization: "techneqly",
+      association_type: "Business-Association",
+      system_label: "Central_Synaptic_Intelligence_Systems",
+      owner_executive_director: "Owner/Executive-Director: Michael_Rybaltowicz",
+      anchor_path: "Home-Room/LightBulb-2-Map_Database/Star_Anchor"
+    })
   }
 });
 
