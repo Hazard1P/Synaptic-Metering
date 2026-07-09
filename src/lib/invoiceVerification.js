@@ -99,8 +99,23 @@ function payloadLines(payload){
   return Array.isArray(body.lines) ? body.lines.map(objectValue) : [];
 }
 
+function hasOwnPath(object, path){
+  let current = object;
+  for(const segment of path){
+    if(!current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, segment)){
+      return false;
+    }
+    current = current[segment];
+  }
+  return true;
+}
+
 function compareValues(mismatches, field, expected, actual){
   if(actual !== expected) mismatches.push({ field, expected, actual });
+}
+
+function compareOptionalValue(mismatches, field, expected, actual, present){
+  if(present) compareValues(mismatches, field, expected, actual);
 }
 
 function compareInvoicePayload(payload, computedInvoices){
@@ -134,11 +149,13 @@ function compareInvoicePayload(payload, computedInvoices){
     }
   }
 
-  const actualLines = payloadLines(payload);
-  const actualItemIds = actualLines.map(line => stringValue(line.item_id)).filter(Boolean).sort();
   const sortedExpected = [...expectedItemIds].sort();
-  if(JSON.stringify(actualItemIds) !== JSON.stringify(sortedExpected)){
-    mismatches.push({ field: "lines.item_id", expected: sortedExpected, actual: actualItemIds });
+  const actualLines = payloadLines(payload);
+  if(Array.isArray(body.lines)){
+    const actualItemIds = actualLines.map(line => stringValue(line.item_id)).filter(Boolean).sort();
+    if(JSON.stringify(actualItemIds) !== JSON.stringify(sortedExpected)){
+      mismatches.push({ field: "lines.item_id", expected: sortedExpected, actual: actualItemIds });
+    }
   }
 
   for(const line of actualLines){
@@ -146,16 +163,16 @@ function compareInvoicePayload(payload, computedInvoices){
     if(!itemId) continue;
     const expected = computedByItem.get(itemId);
     if(!expected) continue;
-    compareValues(mismatches, `lines.${itemId}.seconds`, expected.seconds, numberOrNull(line.seconds));
-    compareValues(mismatches, `lines.${itemId}.quantity`, expected.quantity, numberOrNull(line.quantity));
-    compareValues(mismatches, `lines.${itemId}.unit_price_cents`, expected.unit_price_cents, centsValue(line.unit_price_cents ?? line.unit_price));
-    compareValues(mismatches, `lines.${itemId}.line_total_cents`, expected.line_total_cents, centsValue(line.line_total_cents ?? line.total_cents ?? line.cost));
+    compareOptionalValue(mismatches, `lines.${itemId}.seconds`, expected.seconds, numberOrNull(line.seconds), hasOwnPath(line, ["seconds"]));
+    compareOptionalValue(mismatches, `lines.${itemId}.quantity`, expected.quantity, numberOrNull(line.quantity), hasOwnPath(line, ["quantity"]));
+    compareOptionalValue(mismatches, `lines.${itemId}.unit_price_cents`, expected.unit_price_cents, centsValue(line.unit_price_cents ?? line.unit_price), hasOwnPath(line, ["unit_price_cents"]) || hasOwnPath(line, ["unit_price"]));
+    compareOptionalValue(mismatches, `lines.${itemId}.line_total_cents`, expected.line_total_cents, centsValue(line.line_total_cents ?? line.total_cents ?? line.cost), hasOwnPath(line, ["line_total_cents"]) || hasOwnPath(line, ["total_cents"]) || hasOwnPath(line, ["cost"]));
   }
 
-  compareValues(mismatches, "totals.intelligence_seconds", expectedSeconds, numberOrNull(body.totals?.intelligence_seconds ?? body.intelligence_seconds));
-  compareValues(mismatches, "totals.tracked_quantity", expectedQuantity, numberOrNull(body.totals?.tracked_quantity ?? body.tracked_quantity));
-  compareValues(mismatches, "totals.subtotal_cents", expectedSubtotal, centsValue(body.totals?.subtotal_cents ?? body.subtotal_cents));
-  compareValues(mismatches, "totals.total_cents", expectedTotal, centsValue(body.totals?.total_cents ?? body.total_cents));
+  compareOptionalValue(mismatches, "totals.intelligence_seconds", expectedSeconds, numberOrNull(body.totals?.intelligence_seconds ?? body.intelligence_seconds), hasOwnPath(body, ["totals", "intelligence_seconds"]) || hasOwnPath(body, ["intelligence_seconds"]));
+  compareOptionalValue(mismatches, "totals.tracked_quantity", expectedQuantity, numberOrNull(body.totals?.tracked_quantity ?? body.tracked_quantity), hasOwnPath(body, ["totals", "tracked_quantity"]) || hasOwnPath(body, ["tracked_quantity"]));
+  compareOptionalValue(mismatches, "totals.subtotal_cents", expectedSubtotal, centsValue(body.totals?.subtotal_cents ?? body.subtotal_cents), hasOwnPath(body, ["totals", "subtotal_cents"]) || hasOwnPath(body, ["subtotal_cents"]));
+  compareOptionalValue(mismatches, "totals.total_cents", expectedTotal, centsValue(body.totals?.total_cents ?? body.total_cents), hasOwnPath(body, ["totals", "total_cents"]) || hasOwnPath(body, ["total_cents"]));
 
   return {
     matched: mismatches.length === 0,
@@ -260,7 +277,7 @@ export function verifyInvoiceForAccount(db, { accountId, sessionId = null, paylo
     return {
       accepted: true,
       status: "accepted",
-      verificationMethod: "account_history_server_computed",
+      verificationMethod: "account_history",
       reason: "matched_account_session_history_and_server_computed_totals",
       checked
     };
