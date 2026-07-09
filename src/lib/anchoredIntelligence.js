@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { loadMapDatabaseByAnchorId } from "./mapDatabase.js";
 
 const FIVE_DAY_EPOCH_SECONDS = 5 * 24 * 60 * 60;
@@ -122,6 +123,18 @@ export function fiveDayRollingEpoch(nowUnix = unixSeconds()){
   };
 }
 
+export function deterministicTickId({ anchorId, nowUnix, epochIndex, tickRateHz }){
+  return createHash("sha256")
+    .update(JSON.stringify({
+      anchor_id: String(anchorId || DEFAULT_ANCHOR_ID),
+      now_unix: Number(nowUnix),
+      epoch_index: Number(epochIndex),
+      tick_rate_hz: Number(tickRateHz),
+      operation: "Seconds_Of_Intelligence"
+    }))
+    .digest("hex");
+}
+
 export function normalizeAnchorId(anchorId, db = null){
   return resolveAnchoredAsset(db, anchorId).id;
 }
@@ -129,12 +142,26 @@ export function normalizeAnchorId(anchorId, db = null){
 export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchoredAsset = null, db = null, invoiceKey = null, masterKey = null, now = new Date() } = {}){
   const now_unix = unixSeconds(now);
   const asset = anchoredAsset || resolveAnchoredAsset(db, anchorId);
+  const five_day_epoch = fiveDayRollingEpoch(now_unix);
+  const deterministic_tick_basis = {
+    anchor_id: asset.id,
+    now_unix,
+    epoch_index: five_day_epoch.epoch_index,
+    tick_rate_hz: asset.tick_rate_hz
+  };
   return {
     operation: "Seconds_Of_Intelligence",
     tick_rate_hz: asset.tick_rate_hz,
     tick_seconds: 1,
     now_unix,
-    five_day_epoch: fiveDayRollingEpoch(now_unix),
+    five_day_epoch,
+    deterministic_tick_id: deterministicTickId({
+      anchorId: deterministic_tick_basis.anchor_id,
+      nowUnix: deterministic_tick_basis.now_unix,
+      epochIndex: deterministic_tick_basis.epoch_index,
+      tickRateHz: deterministic_tick_basis.tick_rate_hz
+    }),
+    deterministic_tick_basis,
     anchored_asset: asset,
     invoice_key: invoiceKey,
     master_key: masterKey,
