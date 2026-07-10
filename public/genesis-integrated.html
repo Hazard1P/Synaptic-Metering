@@ -278,11 +278,15 @@
     <div class="anchor">
       <div class="anchor-wrap">
         <div class="orbital"></div>
-        <!-- Put your image in same folder and use that filename -->
-        <img class="anchor-img" src="Michael_Rybaltowicz__[Quantum_anchor]_.jpg" alt="Quantum Anchor">
+        <!-- Canonical Dyson Sphere anchored asset visual -->
+        <img class="anchor-img" src="/maps/dyson-sphere-request-asset.svg" alt="Dyson Sphere Ring-1 Anchored Asset">
       </div>
       <div class="anchor-meta">
         <div class="line"><span class="muted">Anchor ID</span><span class="mono" id="anchorId"></span></div>
+        <div class="line"><span class="muted">Structure</span><span class="mono" id="structureLabel"></span></div>
+        <div class="line"><span class="muted">Ring System</span><span class="mono" id="ringSystemLabel"></span></div>
+        <div class="line"><span class="muted">Ring</span><span class="mono" id="ringLabel"></span></div>
+        <div class="line"><span class="muted">System</span><span class="mono" id="systemLabel"></span></div>
         <div class="line"><span class="muted">Core Version</span><span class="mono" id="coreVersion"></span></div>
         <div class="line"><span class="muted">Build Hash</span><span class="mono" id="buildId"></span></div>
         <div class="line"><span class="muted">Kernel Mode</span><span class="mono" id="kernelMode"></span></div>
@@ -396,7 +400,13 @@
   // ---- Filled Defaults (missing fields resolved)
   const CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0 ULTRA STATIC";
   const BUILD_ID = "GEN-"+Math.random().toString(36).slice(2,10).toUpperCase();
-  const ANCHOR_ID = "Q-ANCHOR-"+Math.random().toString(36).slice(2,8).toUpperCase();
+  const ANCHOR_ID = "dyson-sphere-ring-1";
+  const GENESIS_ASSET_METADATA = Object.freeze({
+    structure_label: "Dyson-Sphere",
+    ring_system_label: "3_ring_Dyson-Sphere",
+    ring_label: "Ring-1",
+    system_label: "Central_Synaptic_Intelligence_Systems"
+  });
   const KERNEL_MODE = NDSP_BACKEND ? "BACKEND-AUTHORITY + LOCAL FAILOVER" : "LOCAL-AUTHORITY";
   const TICK_RATE_HZ = 1;
   const WINDOW_SIZE = 42;                 // Codex + coherence window
@@ -424,6 +434,10 @@
   $("coreVersion").textContent = CORE_VERSION;
   $("buildId").textContent = BUILD_ID;
   $("anchorId").textContent = ANCHOR_ID;
+  $("structureLabel").textContent = GENESIS_ASSET_METADATA.structure_label;
+  $("ringSystemLabel").textContent = GENESIS_ASSET_METADATA.ring_system_label;
+  $("ringLabel").textContent = GENESIS_ASSET_METADATA.ring_label;
+  $("systemLabel").textContent = GENESIS_ASSET_METADATA.system_label;
   $("kernelMode").textContent = KERNEL_MODE;
   $("windowSizeUI").textContent = WINDOW_SIZE+" ticks";
   $("tickRateUI").textContent = TICK_RATE_HZ+" Hz";
