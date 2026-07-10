@@ -13,7 +13,7 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     role: "governance_intelligence_database",
     physics_role: "considered_in_data_and_physics_not_pulled_through",
     tick_rate_hz: 1,
-    vector: "tip_to_dipper_epoch_unix_discrepancy"
+    vector: "tip_to_dipper_24_hour_unix_daily_alignment"
   },
   cassiopeia: {
     id: "cassiopeia",
@@ -23,7 +23,7 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     role: "quantum_biometric_moderation",
     physics_role: "considered_in_data_and_physics_not_pulled_through",
     tick_rate_hz: 1,
-    vector: "relative_anchored_star_biometrics"
+    vector: "relative_anchored_star_24_hour_unix_daily_alignment"
   },
   "isolated-blackholes": {
     id: "isolated-blackholes",
