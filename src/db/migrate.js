@@ -345,8 +345,8 @@ db.prepare(`
   VALUES
     ('dyson-sphere-ring-1', 'Dyson-Sphere Ring-1 map database', 'physical_map_database', 'permanent_anchor', 'operator_map_database', 'map_database_reference_anchor', 1, 'ring_1_physical_map_reference'),
     ('fabric-universe-ring-map', 'Fabric Universe Map Anchor', 'fabric_universe_map', 'permanent_anchor', 'deterministic_metering_anchor', 'map_database_reference_anchor', 1, 'fabric_universe_reference'),
-    ('major-ursa', 'Major Ursa anchored star/database', 'constellation_database', 'permanent_anchor', 'governance_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'tip_to_dipper_epoch_unix_discrepancy'),
-    ('cassiopeia', 'Cassiopeia quantum biometrics anchor', 'constellation_biometrics', 'permanent_anchor', 'quantum_biometric_moderation', 'considered_in_data_and_physics_not_pulled_through', 1, 'relative_anchored_star_biometrics'),
+    ('major-ursa', 'Major Ursa anchored star/database', 'constellation_database', 'permanent_anchor', 'governance_intelligence_database', 'considered_in_data_and_physics_not_pulled_through', 1, 'tip_to_dipper_24_hour_unix_daily_alignment'),
+    ('cassiopeia', 'Cassiopeia quantum biometrics anchor', 'constellation_biometrics', 'permanent_anchor', 'quantum_biometric_moderation', 'considered_in_data_and_physics_not_pulled_through', 1, 'relative_anchored_star_24_hour_unix_daily_alignment'),
     ('isolated-blackholes', 'Isolated blackholes universe-mesh anchors', 'blackhole_mesh_anchor', 'permanent_anchor', 'universe_mesh_intelligence_reference', 'considered_in_data_and_physics_not_pulled_through', 1, 'non_extractive_gravity_reference'),
     ('fabric-universe-ring-map', 'Fabric Universe Ring deterministic map anchor', 'deterministic_map_anchor', 'permanent_anchor', 'operator_map_database', 'deterministic_ring_map_reference_anchor', 1, 'fabric_universe_ring_map_reference')
 `).run();
@@ -375,6 +375,21 @@ db.prepare(`
   'ring_1_physical_map_reference',
   'dyson-sphere-ring-1'
 );
+
+// Daily Unix relevancy is exposed through the existing anchor vector metadata;
+// keep this backward-compatible by normalizing the seeded rows instead of
+// introducing a new required schema element.
+db.prepare(`
+  UPDATE anchored_assets
+  SET vector = ?
+  WHERE id = ?
+`).run('tip_to_dipper_24_hour_unix_daily_alignment', 'major-ursa');
+
+db.prepare(`
+  UPDATE anchored_assets
+  SET vector = ?
+  WHERE id = ?
+`).run('relative_anchored_star_24_hour_unix_daily_alignment', 'cassiopeia');
 
 seedMapAssetDigests(db);
 const invoiceColumns = [
