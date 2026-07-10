@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { loadMapDatabaseByAnchorId } from "./mapDatabase.js";
 
 const FIVE_DAY_EPOCH_SECONDS = 5 * 24 * 60 * 60;
+const DAILY_UNIX_WINDOW_SECONDS = 24 * 60 * 60;
 
 export const ANCHORED_ASSET_MAP = Object.freeze({
   "major-ursa": {
@@ -118,6 +119,23 @@ export function unixSeconds(date = new Date()){
   return Math.floor(date.getTime() / 1000);
 }
 
+export function dailyUnixRelevancy(nowUnix = unixSeconds()){
+  const day_index = Math.floor(nowUnix / DAILY_UNIX_WINDOW_SECONDS);
+  const day_start_unix = day_index * DAILY_UNIX_WINDOW_SECONDS;
+  const day_end_unix = day_start_unix + DAILY_UNIX_WINDOW_SECONDS - 1;
+  const seconds_into_day = nowUnix - day_start_unix;
+  return {
+    window_seconds: DAILY_UNIX_WINDOW_SECONDS,
+    day_index,
+    day_start_unix,
+    day_end_unix,
+    seconds_into_day,
+    seconds_remaining: day_end_unix - nowUnix,
+    aligned_anchors: ["major-ursa", "cassiopeia"],
+    discrepancy_basis: "unix_daily_24_hour_alignment"
+  };
+}
+
 export function fiveDayRollingEpoch(nowUnix = unixSeconds()){
   const epoch_index = Math.floor(nowUnix / FIVE_DAY_EPOCH_SECONDS);
   const epoch_start_unix = epoch_index * FIVE_DAY_EPOCH_SECONDS;
@@ -153,6 +171,7 @@ export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchored
   const now_unix = unixSeconds(now);
   const asset = anchoredAsset || resolveAnchoredAsset(db, anchorId);
   const five_day_epoch = fiveDayRollingEpoch(now_unix);
+  const daily_unix_relevancy = dailyUnixRelevancy(now_unix);
   const deterministic_tick_basis = {
     anchor_id: asset.id,
     now_unix,
@@ -165,6 +184,7 @@ export function intelligenceTickContext({ anchorId = DEFAULT_ANCHOR_ID, anchored
     tick_seconds: 1,
     now_unix,
     five_day_epoch,
+    daily_unix_relevancy,
     deterministic_tick_id: deterministicTickId({
       anchorId: deterministic_tick_basis.anchor_id,
       nowUnix: deterministic_tick_basis.now_unix,
