@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  dailyUnixRelevancy,
   deterministicTickId,
   intelligenceTickContext
 } from "../src/lib/anchoredIntelligence.js";
@@ -36,4 +37,31 @@ describe("deterministic metering context", () => {
     assert.notEqual(base.deterministic_tick_id, nextSecond.deterministic_tick_id);
     assert.notEqual(base.deterministic_tick_id, differentAnchor.deterministic_tick_id);
   });
+
+  it("returns a deterministic daily Unix relevancy window for a known timestamp", () => {
+    const nowUnix = 1783600496;
+
+    assert.deepEqual(dailyUnixRelevancy(nowUnix), {
+      window_seconds: 86400,
+      day_index: 20643,
+      day_start_unix: 1783555200,
+      day_end_unix: 1783641599,
+      seconds_into_day: 45296,
+      seconds_remaining: 41103,
+      aligned_anchors: ["major-ursa", "cassiopeia"],
+      discrepancy_basis: "unix_daily_24_hour_alignment"
+    });
+  });
+
+  it("includes the daily Unix relevancy window in intelligence tick context", () => {
+    const context = intelligenceTickContext({
+      anchorId: "dyson-sphere-ring-1",
+      now: new Date("2026-07-09T12:34:56.000Z")
+    });
+
+    assert.deepEqual(context.daily_unix_relevancy, dailyUnixRelevancy(1783600496));
+    assert.deepEqual(context.daily_unix_relevancy.aligned_anchors, ["major-ursa", "cassiopeia"]);
+    assert.ok(context.five_day_epoch);
+  });
+
 });
