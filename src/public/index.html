@@ -53,6 +53,7 @@
       border-color: rgba(255,255,255,.22);
     }
     .btn:hover{text-decoration:none;border-color:rgba(143,227,255,.55);}
+    button.btn{cursor:pointer;}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px;}
     @media (max-width:860px){ .grid{grid-template-columns:1fr;} }
     .panel{
@@ -130,6 +131,16 @@
           </div>
         </section>
 
+        <section class="panel status-box" id="accountSecurity" aria-live="polite" hidden>
+          <h2>Account security</h2>
+          <p class="status-line" id="passkeyStatus">Checking passkey status…</p>
+          <p class="muted" id="passkeyDetail">Passkeys use browser-native WebAuthn prompts. Do not upload fingerprints, face images, or other biometric samples.</p>
+          <div class="actions">
+            <button class="btn primary" id="btnCreatePasskey" type="button">Create passkey</button>
+            <button class="btn" id="btnPasskeySignIn" type="button" hidden>Sign in with passkey</button>
+          </div>
+        </section>
+
         <section class="panel status-box" aria-live="polite">
           <h2>Map Database Anchor</h2>
           <p class="status-line" id="mapAuthStatus">Checking map database…</p>
@@ -169,6 +180,20 @@
       $("signInTop").hidden = false;
       $("lockedTools").hidden = false;
       $("accountLinks").hidden = true;
+      $("accountSecurity").hidden = true;
+      $("btnPasskeySignIn").hidden = false;
+    }
+
+    function accountHasPasskey(profile){
+      const account = profile?.account || {};
+      return Boolean(
+        account.has_passkey ||
+        account.passkey_enabled ||
+        account.webauthn_enabled ||
+        profile?.has_passkey ||
+        (Array.isArray(profile?.passkeys) && profile.passkeys.length > 0) ||
+        (Array.isArray(account.passkeys) && account.passkeys.length > 0)
+      );
     }
 
     function showSignedIn(profile){
@@ -183,6 +208,13 @@
       $("signInTop").hidden = true;
       $("lockedTools").hidden = true;
       $("accountLinks").hidden = false;
+      $("accountSecurity").hidden = false;
+      const hasPasskey = accountHasPasskey(profile);
+      $("passkeyStatus").textContent = hasPasskey ? "Passkey enabled" : "No passkey registered";
+      $("passkeyDetail").textContent = hasPasskey
+        ? "You can use a browser-native passkey prompt to sign in on this device."
+        : "Create a passkey to add browser-native WebAuthn sign-in. Biometric checks stay on your device.";
+      $("btnPasskeySignIn").hidden = !hasPasskey;
     }
 
     function b64ToBuf(v){ const s = v.replace(/-/g,"+").replace(/_/g,"/"); const bin = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(bin, c => c.charCodeAt(0)).buffer; }
@@ -198,6 +230,88 @@
       $("mapAnchorId").textContent = map.active_anchor_id || "—";
       $("mapStatus").textContent = map.authentication_status || "—";
       $("mapTickRate").textContent = map.tick_rate_hz ? `${map.tick_rate_hz} Hz` : "—";
+    }
+
+
+    function base64UrlToBuffer(value){
+      const base64 = String(value).replace(/-/g, "+").replace(/_/g, "/");
+      const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+      const binary = atob(padded);
+      return Uint8Array.from(binary, (char) => char.charCodeAt(0)).buffer;
+    }
+
+    function bufferToBase64Url(buffer){
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function decodeCredentialOptions(options){
+      const decoded = { ...options };
+      if(decoded.challenge) decoded.challenge = base64UrlToBuffer(decoded.challenge);
+      if(decoded.user?.id) decoded.user = { ...decoded.user, id: base64UrlToBuffer(decoded.user.id) };
+      if(Array.isArray(decoded.excludeCredentials)){
+        decoded.excludeCredentials = decoded.excludeCredentials.map((credential) => ({ ...credential, id: base64UrlToBuffer(credential.id) }));
+      }
+      if(Array.isArray(decoded.allowCredentials)){
+        decoded.allowCredentials = decoded.allowCredentials.map((credential) => ({ ...credential, id: base64UrlToBuffer(credential.id) }));
+      }
+      return decoded;
+    }
+
+    function serializeCredential(credential){
+      const response = credential.response;
+      const serialized = { id: credential.id, rawId: bufferToBase64Url(credential.rawId), type: credential.type };
+      if(response.attestationObject){
+        serialized.response = {
+          clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+          attestationObject: bufferToBase64Url(response.attestationObject)
+        };
+      }else{
+        serialized.response = {
+          clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+          authenticatorData: bufferToBase64Url(response.authenticatorData),
+          signature: bufferToBase64Url(response.signature),
+          userHandle: response.userHandle ? bufferToBase64Url(response.userHandle) : null
+        };
+      }
+      return serialized;
+    }
+
+    async function webAuthnFlow(kind){
+      if(!window.PublicKeyCredential || !navigator.credentials){
+        throw new Error("This browser does not support WebAuthn passkeys.");
+      }
+      const startPath = kind === "create" ? "/auth/webauthn/register/options" : "/auth/webauthn/login/options";
+      const finishPath = kind === "create" ? "/auth/webauthn/register/verify" : "/auth/webauthn/login/verify";
+      const optionsResponse = await fetch(startPath, { method: "POST", credentials: "same-origin", headers: { "Accept": "application/json" } });
+      const optionsPayload = await optionsResponse.json().catch(() => ({}));
+      if(!optionsResponse.ok) throw new Error(optionsPayload?.error || "Could not start passkey flow.");
+      const publicKey = decodeCredentialOptions(optionsPayload.publicKey || optionsPayload);
+      const credential = kind === "create"
+        ? await navigator.credentials.create({ publicKey })
+        : await navigator.credentials.get({ publicKey });
+      const verifyResponse = await fetch(finishPath, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ credential: serializeCredential(credential) })
+      });
+      const verifyPayload = await verifyResponse.json().catch(() => ({}));
+      if(!verifyResponse.ok) throw new Error(verifyPayload?.error || "Passkey verification failed.");
+      return verifyPayload;
+    }
+
+    async function runPasskey(kind){
+      try{
+        $("passkeyStatus").textContent = kind === "create" ? "Creating passkey…" : "Waiting for passkey…";
+        await webAuthnFlow(kind);
+        $("passkeyStatus").textContent = kind === "create" ? "Passkey created" : "Signed in with passkey";
+        await loadAccountStatus();
+      }catch(e){
+        $("passkeyStatus").textContent = "Passkey error: " + e.message;
+      }
     }
 
     async function loadMapDatabaseStatus(){
@@ -236,8 +350,9 @@
       }
     }
 
-    $("btnPasskeyLogin").addEventListener("click", () => passkeyLogin().catch(e => showSignedOut(e.message)));
-    $("btnPasskeyEnroll").addEventListener("click", () => passkeyEnroll().catch(e => alert(e.message)));
+    $("btnCreatePasskey").addEventListener("click", () => runPasskey("create"));
+    $("btnPasskeySignIn").addEventListener("click", () => runPasskey("get"));
+
     $("build").textContent = new Date().toISOString();
     loadAccountStatus();
     loadMapDatabaseStatus();

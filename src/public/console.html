@@ -60,6 +60,8 @@
       outline:none;
     }
     input{min-width:220px;}
+    .field{display:flex; flex-direction:column; gap:5px; min-width:220px; flex:1;}
+    .field input, .field select{width:100%; min-width:0;}
     button{cursor:pointer;}
     button.primary{
       background: linear-gradient(90deg, rgba(0,245,255,.22), rgba(124,77,255,.22), rgba(0,255,136,.18));
@@ -239,6 +241,29 @@
         <span class="status" id="ndspStatus"></span>
       </div>
       <div style="height:10px"></div>
+      <div class="grid2">
+        <div class="field">
+          <label for="telemetryProvider">Provider</label>
+          <input id="telemetryProvider" placeholder="browser-console"/>
+        </div>
+        <div class="field">
+          <label for="telemetryEventType">Event type</label>
+          <input id="telemetryEventType" placeholder="seconds-monitor"/>
+        </div>
+        <div class="field">
+          <label for="telemetryAnchorId">Anchor ID</label>
+          <input id="telemetryAnchorId" placeholder="dyson-sphere-ring-1"/>
+        </div>
+        <div class="field">
+          <label for="telemetryMeasuredValue">Measured value</label>
+          <input id="telemetryMeasuredValue" type="number" step="any" placeholder="1"/>
+        </div>
+        <div class="field">
+          <label for="telemetryConsentRef">Consent reference</label>
+          <input id="telemetryConsentRef" placeholder="browser-native-consent"/>
+        </div>
+      </div>
+      <div style="height:10px"></div>
       <pre id="ndspOut">{}</pre>
     </div>
 
@@ -275,10 +300,20 @@
   function loadCfg(){
     $("apiBase").value = sessionStorage.getItem("syn_apiBase") || location.origin;
     $("sessionId").value = sessionStorage.getItem("syn_sessionId") || "";
+    $("telemetryProvider").value = sessionStorage.getItem("syn_telemetryProvider") || "browser-console";
+    $("telemetryEventType").value = sessionStorage.getItem("syn_telemetryEventType") || "seconds-monitor";
+    $("telemetryAnchorId").value = sessionStorage.getItem("syn_telemetryAnchorId") || "dyson-sphere-ring-1";
+    $("telemetryMeasuredValue").value = sessionStorage.getItem("syn_telemetryMeasuredValue") || "1";
+    $("telemetryConsentRef").value = sessionStorage.getItem("syn_telemetryConsentRef") || "browser-native-consent";
   }
   function saveCfg(){
     sessionStorage.setItem("syn_apiBase", $("apiBase").value.trim());
     sessionStorage.setItem("syn_sessionId", $("sessionId").value.trim());
+    sessionStorage.setItem("syn_telemetryProvider", $("telemetryProvider").value.trim());
+    sessionStorage.setItem("syn_telemetryEventType", $("telemetryEventType").value.trim());
+    sessionStorage.setItem("syn_telemetryAnchorId", $("telemetryAnchorId").value.trim());
+    sessionStorage.setItem("syn_telemetryMeasuredValue", $("telemetryMeasuredValue").value.trim());
+    sessionStorage.setItem("syn_telemetryConsentRef", $("telemetryConsentRef").value.trim());
   }
 
   function setAccountControls(account){
@@ -532,9 +567,15 @@
   $("btnNdspSend").addEventListener("click", async ()=>{
     try{
       saveCfg();
+      const measuredValue = Number($("telemetryMeasuredValue").value);
       const payload = {
         ts: new Date().toISOString(),
         session_id: $("sessionId").value.trim() || null,
+        provider: $("telemetryProvider").value.trim() || "browser-console",
+        event_type: $("telemetryEventType").value.trim() || "seconds-monitor",
+        anchor_id: $("telemetryAnchorId").value.trim() || "dyson-sphere-ring-1",
+        measured_value: Number.isFinite(measuredValue) ? measuredValue : null,
+        consent_reference: $("telemetryConsentRef").value.trim() || "browser-native-consent",
         note: "seconds-monitor",
         channels: { c_load: Math.random(), s_var: Math.random(), circ_drift: Math.random() }
       };
