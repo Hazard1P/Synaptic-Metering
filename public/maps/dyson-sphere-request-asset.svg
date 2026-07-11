@@ -1,38 +1,107 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1800" role="img" aria-labelledby="title desc">
-  <title id="title">User-provided Dyson sphere star map asset</title>
-  <desc id="desc">Text-based SVG reconstruction of the provided physical star-map image so the asset can be stored in Git without binary image files.</desc>
-  <rect width="1200" height="1800" fill="#f7f5ed"/>
-  <rect x="72" y="64" width="1056" height="1664" rx="8" fill="#fbfaf5" stroke="#151515" stroke-width="10"/>
-  <path d="M230 1550 C360 1620 710 1640 950 1538" fill="none" stroke="#111" stroke-width="2" stroke-dasharray="6 12" opacity=".55"/>
-  <path d="M150 520 C250 345 430 285 530 305 C630 325 635 455 510 590 C385 725 225 780 165 720 C115 670 120 590 150 520 Z" fill="none" stroke="#d9d260" stroke-width="28" opacity=".72"/>
-  <circle cx="390" cy="515" r="120" fill="#251f38" stroke="#111" stroke-width="4"/>
-  <path d="M390 395 L390 635 M270 515 L510 515" stroke="#eee" stroke-width="3" opacity=".7"/>
-  <path d="M395 1040 C520 830 680 635 842 515 C892 600 920 688 878 782 C820 908 700 1048 610 1168 Z" fill="#111" opacity=".85"/>
-  <circle cx="580" cy="970" r="170" fill="#208be7" stroke="#111" stroke-width="5"/>
-  <path d="M480 900 C535 840 595 835 675 872 C640 912 585 915 548 960 C520 1000 490 987 440 1010 C430 963 445 928 480 900 Z" fill="#f4f0dc" stroke="#416b4d" stroke-width="3"/>
-  <path d="M610 1010 C680 960 735 990 765 1040 C720 1110 650 1125 590 1080 Z" fill="#e8e4d2" stroke="#416b4d" stroke-width="3"/>
-  <path d="M755 595 C850 505 965 530 1025 625 C1068 693 1045 802 960 855 C860 918 740 862 706 760 C684 695 704 642 755 595 Z" fill="#eaa53d" stroke="#111" stroke-width="5"/>
-  <path d="M720 655 C840 705 934 784 1010 858 M775 545 C840 650 900 760 945 870 M690 760 C810 675 915 610 1030 580" fill="none" stroke="#e8e4d2" stroke-width="24"/>
-  <path d="M735 640 C835 695 940 770 1015 850 M775 545 C840 650 900 760 945 870 M690 760 C810 675 915 610 1030 580" fill="none" stroke="#384f78" stroke-width="10" stroke-dasharray="8 10"/>
-  <circle cx="678" cy="884" r="45" fill="#d7b83f" stroke="#111" stroke-width="4"/>
+  <title id="title">Refined Dyson Sphere Anchorage Star Map Asset</title>
+  <desc id="desc">A Git-safe vector reconstruction of the provided physical star-map image, refined with layered paper texture, orbital geometry, constellation anchors, and a one-second metering anchorage motif.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="0.48" stop-color="#f5f0df"/>
+      <stop offset="1" stop-color="#e8dfc4"/>
+    </linearGradient>
+    <radialGradient id="void" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#354264"/>
+      <stop offset="0.55" stop-color="#151827"/>
+      <stop offset="1" stop-color="#090a11"/>
+    </radialGradient>
+    <radialGradient id="earthGlow" cx="38%" cy="32%" r="68%">
+      <stop offset="0" stop-color="#69d0ff"/>
+      <stop offset="0.58" stop-color="#208be7"/>
+      <stop offset="1" stop-color="#0b3d91"/>
+    </radialGradient>
+    <radialGradient id="sunCore" cx="38%" cy="35%" r="64%">
+      <stop offset="0" stop-color="#ffe99f"/>
+      <stop offset="0.45" stop-color="#eeb442"/>
+      <stop offset="1" stop-color="#b86124"/>
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#17130c" flood-opacity="0.22"/>
+    </filter>
+    <filter id="paperGrain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.08" numOctaves="2" seed="41" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0.62 0 0 0 0 0.55 0 0 0 0 0.38 0 0 0 .16 0"/>
+    </filter>
+    <style>
+      .ink{stroke:#141416;stroke-linecap:round;stroke-linejoin:round}.label{font-family:Inter, system-ui, Segoe UI, Arial, sans-serif}.caption{letter-spacing:.08em;text-transform:uppercase}.small-star{fill:#172034}.gold{stroke:#cdb84e}.nav{stroke:#5f6680;stroke-dasharray:6 10}.fine{stroke-width:2}.route{fill:none;stroke:#d8ca64;stroke-width:9;stroke-linecap:round;stroke-dasharray:1 18}.orbit{fill:none;stroke:#24324d;stroke-width:4;stroke-dasharray:10 12;opacity:.78}
+    </style>
+  </defs>
+  <rect width="1200" height="1800" fill="#ede6d1"/>
+  <rect x="72" y="64" width="1056" height="1664" rx="18" fill="url(#paper)" stroke="#151515" stroke-width="10" filter="url(#softShadow)"/>
+  <rect x="92" y="84" width="1016" height="1624" rx="12" fill="none" stroke="#b9aa74" stroke-width="2" opacity=".55"/>
+  <rect x="72" y="64" width="1056" height="1664" rx="18" fill="transparent" filter="url(#paperGrain)" opacity=".42"/>
+
+  <path d="M148 520 C252 338 436 280 536 303 C644 328 650 458 516 598 C382 738 222 792 158 724 C110 673 116 592 148 520 Z" fill="none" stroke="#d9d260" stroke-width="31" opacity=".36"/>
+  <path d="M153 522 C257 352 428 302 525 319 C616 335 622 452 501 582 C382 709 238 765 174 712 C124 670 124 592 153 522 Z" fill="none" stroke="#5d6a45" stroke-width="5" opacity=".65"/>
+
+  <g filter="url(#softShadow)">
+    <circle cx="390" cy="515" r="122" fill="url(#void)" stroke="#101013" stroke-width="5"/>
+    <circle cx="390" cy="515" r="93" fill="none" stroke="#dfd88b" stroke-width="2" opacity=".34"/>
+    <path d="M390 398 L390 632 M273 515 L507 515 M307 433 L473 597 M473 433 L307 597" stroke="#f6f0d6" stroke-width="3" opacity=".68"/>
+    <circle cx="346" cy="462" r="5" fill="#f7eeb2"/><circle cx="431" cy="545" r="4" fill="#f7eeb2"/><circle cx="413" cy="475" r="3" fill="#f7eeb2"/>
+  </g>
+
+  <path d="M395 1040 C520 830 680 635 842 515 C892 600 920 688 878 782 C820 908 700 1048 610 1168 Z" fill="#111" opacity=".84"/>
+  <path d="M441 1040 C548 854 690 682 833 566" fill="none" stroke="#e9df9c" stroke-width="4" stroke-dasharray="7 13" opacity=".48"/>
+
+  <g filter="url(#softShadow)">
+    <circle cx="580" cy="970" r="173" fill="url(#earthGlow)" stroke="#111" stroke-width="5"/>
+    <path d="M478 898 C535 837 599 835 678 871 C642 914 585 918 548 960 C520 1001 490 988 438 1011 C428 963 443 927 478 898 Z" fill="#f4f0dc" stroke="#416b4d" stroke-width="4"/>
+    <path d="M610 1010 C682 960 737 990 767 1041 C720 1112 650 1128 589 1081 Z" fill="#e8e4d2" stroke="#416b4d" stroke-width="4"/>
+    <path d="M500 1098 C548 1130 612 1145 678 1127" fill="none" stroke="#9dd5ff" stroke-width="7" opacity=".55"/>
+    <circle cx="524" cy="902" r="26" fill="#ffffff" opacity=".17"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <path d="M755 595 C850 505 965 530 1025 625 C1068 693 1045 802 960 855 C860 918 740 862 706 760 C684 695 704 642 755 595 Z" fill="url(#sunCore)" stroke="#111" stroke-width="5"/>
+    <path d="M720 655 C840 705 934 784 1010 858 M775 545 C840 650 900 760 945 870 M690 760 C810 675 915 610 1030 580" fill="none" stroke="#f5ecd0" stroke-width="24" opacity=".84"/>
+    <path d="M735 640 C835 695 940 770 1015 850 M775 545 C840 650 900 760 945 870 M690 760 C810 675 915 610 1030 580" fill="none" stroke="#384f78" stroke-width="10" stroke-dasharray="8 10"/>
+  </g>
+
+  <circle cx="678" cy="884" r="46" fill="#d7b83f" stroke="#111" stroke-width="4" filter="url(#softShadow)"/>
+  <path class="orbit" d="M640 894 C738 808 895 823 1018 948 C1128 1060 1128 1248 1005 1374 C878 1504 686 1452 642 1304 C612 1203 626 1032 710 910"/>
   <path d="M833 930 C925 960 1025 1050 1058 1168 C1100 1320 1002 1452 840 1430 C720 1414 664 1310 697 1190 C724 1088 768 1006 833 930 Z" fill="none" stroke="#222" stroke-width="7"/>
   <path d="M812 1025 C920 1095 1010 1235 1012 1372 M734 1175 C856 1192 980 1190 1080 1130" fill="none" stroke="#c7b84a" stroke-width="8" opacity=".65"/>
-  <path d="M235 1185 L368 1050 L475 1195 Z" fill="none" stroke="#222" stroke-width="6"/>
-  <circle cx="235" cy="1185" r="10" fill="#d6a74a"/><circle cx="368" cy="1050" r="10" fill="#d6a74a"/><circle cx="475" cy="1195" r="10" fill="#d6a74a"/>
-  <g fill="#111" opacity=".82">
+
+  <g class="ink" fill="none">
+    <path d="M235 1185 L368 1050 L475 1195 Z" stroke-width="6"/>
+    <path d="M368 1050 L580 970 L678 884 L833 930" stroke="#9b8d3f" stroke-width="3" stroke-dasharray="8 12" opacity=".7"/>
+  </g>
+  <g fill="#d6a74a" stroke="#111" stroke-width="2">
+    <circle cx="235" cy="1185" r="11"/><circle cx="368" cy="1050" r="11"/><circle cx="475" cy="1195" r="11"/>
+    <circle cx="580" cy="970" r="7"/><circle cx="833" cy="930" r="7"/>
+  </g>
+
+  <path class="route" d="M230 1550 C360 1620 710 1640 950 1538" opacity=".65"/>
+  <path d="M230 1550 C360 1620 710 1640 950 1538" fill="none" stroke="#111" stroke-width="2" stroke-dasharray="6 12" opacity=".55"/>
+
+  <g class="small-star">
     <circle cx="170" cy="260" r="4"/><circle cx="245" cy="320" r="3"/><circle cx="325" cy="275" r="5"/><circle cx="760" cy="210" r="4"/><circle cx="1030" cy="330" r="4"/>
     <circle cx="1020" cy="915" r="5"/><circle cx="980" cy="1240" r="4"/><circle cx="735" cy="1510" r="5"/><circle cx="450" cy="1515" r="4"/><circle cx="300" cy="1390" r="3"/>
     <circle cx="970" cy="250" r="3"/><circle cx="590" cy="300" r="3"/><circle cx="565" cy="700" r="4"/><circle cx="190" cy="930" r="4"/>
+    <circle cx="885" cy="1555" r="3"/><circle cx="150" cy="1010" r="3"/><circle cx="1045" cy="470" r="3"/><circle cx="512" cy="215" r="2"/>
   </g>
-  <g stroke="#555" stroke-width="2" stroke-dasharray="6 8" opacity=".6" fill="none">
+  <g class="nav fine" fill="none" opacity=".64">
     <path d="M170 260 L245 320 L325 275"/><path d="M760 210 L970 250 L1030 330"/><path d="M1020 915 L980 1240 L735 1510 L450 1515"/><path d="M300 1390 L450 1515 L735 1510"/><path d="M190 930 L235 1185 L368 1050"/>
   </g>
-  <g stroke="#111" stroke-width="2" opacity=".72">
+  <g class="ink" stroke-width="2" opacity=".72">
     <path d="M140 1500 l-22 0 m11 -11 l0 22 m-8 -8 l16 16 m0 -16 l-16 16"/>
     <path d="M1040 1500 l-22 0 m11 -11 l0 22 m-8 -8 l16 16 m0 -16 l-16 16"/>
     <path d="M940 420 l-22 0 m11 -11 l0 22 m-8 -8 l16 16 m0 -16 l-16 16"/>
     <path d="M205 735 l-22 0 m11 -11 l0 22 m-8 -8 l16 16 m0 -16 l-16 16"/>
   </g>
-  <text x="96" y="112" fill="#263247" font-family="system-ui, Segoe UI, Arial" font-size="28" font-weight="700">Central Synaptic Intelligence Systems</text>
-  <text x="96" y="148" fill="#596172" font-family="system-ui, Segoe UI, Arial" font-size="18">Provided physical map asset • Git-safe SVG transcription • 1-second metering anchor</text>
+
+  <g class="label">
+    <text x="96" y="112" fill="#263247" font-size="29" font-weight="800">Central Synaptic Intelligence Systems</text>
+    <text x="96" y="148" fill="#596172" font-size="18">Refined physical map asset • Git-safe SVG transcription • 1-second metering anchorage</text>
+    <text x="96" y="1690" fill="#263247" font-size="16" class="caption">ANCHORAGE GRID / PRIVATE ADMIN ASSOCIATED</text>
+    <text x="890" y="1690" fill="#263247" font-size="16" class="caption">PT1S ANCHOR</text>
+  </g>
 </svg>

@@ -1,6 +1,6 @@
 {
   "map_id": "dyson-sphere-request-asset",
-  "title": "User-provided Dyson sphere star map asset",
+  "title": "Refined Dyson Sphere Anchorage Star Map Asset",
   "format": "svg",
   "binary_storage": false,
   "source": "user-provided request image",
@@ -12,5 +12,5 @@
     "visibility": "private-admin-associated"
   },
   "asset_path": "public/maps/dyson-sphere-request-asset.svg",
-  "notes": "This metadata points to a text-based SVG transcription so the repository can keep the provided map asset in Git without committing a binary raster file."
+  "notes": "This metadata points to a refined text-based SVG transcription with layered paper texture, orbital geometry, constellation anchors, and a one-second metering anchorage motif so the repository can keep the provided map asset in Git without committing a binary raster file."
 }
