@@ -317,6 +317,16 @@ export function startGoogleOAuth(req, res, next){
   }catch(e){ next(e); }
 }
 
+export function createAuthSession(db, req, res, accountId){
+  const authSessionId = "authsess_" + nanoid(32);
+  db.prepare(`
+    INSERT INTO auth_sessions (id, account_id, expires_at)
+    VALUES (?, ?, datetime('now', ?))
+  `).run(authSessionId, accountId, `+${AUTH_SESSION_TTL_DAYS} days`);
+  appendCookie(res, SESSION_COOKIE_NAME, authSessionId, AUTH_SESSION_TTL_DAYS * 24 * 60 * 60, req);
+  return authSessionId;
+}
+
 export function googleOAuthCallback(db){
   return async (req, res, next) => {
     try{
@@ -337,12 +347,7 @@ export function googleOAuthCallback(db){
       assertAllowedDomain(claims);
 
       const account = linkGoogleIdentity(db, claims, tokenSet, googleAccountPolicy(claims));
-      const authSessionId = "authsess_" + nanoid(32);
-      db.prepare(`
-        INSERT INTO auth_sessions (id, account_id, expires_at)
-        VALUES (?, ?, datetime('now', ?))
-      `).run(authSessionId, account.id, `+${AUTH_SESSION_TTL_DAYS} days`);
-      appendCookie(res, SESSION_COOKIE_NAME, authSessionId, AUTH_SESSION_TTL_DAYS * 24 * 60 * 60, req);
+      createAuthSession(db, req, res, account.id);
 
       const returnTo = process.env.OAUTH_SUCCESS_REDIRECT || "/me";
       res.redirect(returnTo);

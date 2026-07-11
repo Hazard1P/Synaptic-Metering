@@ -147,6 +147,8 @@
       <h2>Account Session</h2>
       <div class="row">
         <a class="pill" id="btnLogin" href="/auth/google/start">Sign in with Google</a>
+        <button id="btnPasskeyLogin" type="button">Sign in with passkey</button>
+        <button id="btnPasskeyEnroll" type="button">Enroll passkey</button>
         <button class="danger" id="btnLogout" type="button">Logout</button>
         <button id="btnRefreshAccount" type="button">Refresh Account</button>
         <span class="status" id="accountStatus">Checking account...</span>
@@ -318,6 +320,8 @@
     authenticatedAccount = account || null;
     authRequiredButtons.forEach(id=>{ if($(id)) $(id).disabled = !authenticatedAccount; });
     $("btnLogin").style.display = authenticatedAccount ? "none" : "inline-block";
+    $("btnPasskeyLogin").style.display = authenticatedAccount ? "none" : "inline-block";
+    $("btnPasskeyEnroll").style.display = authenticatedAccount ? "inline-block" : "none";
     $("btnLogout").style.display = authenticatedAccount ? "inline-block" : "none";
     $("accountStatus").textContent = authenticatedAccount
       ? `Signed in as ${authenticatedAccount.display_name || authenticatedAccount.id}`
@@ -340,8 +344,13 @@
   }
 
   function requireSignedIn(){
-    if(!authenticatedAccount) throw new Error("Please sign in with Google before using browser metering.");
+    if(!authenticatedAccount) throw new Error("Please sign in with Google or a passkey before using browser metering.");
   }
+
+  function b64ToBuf(v){ const s = v.replace(/-/g,"+").replace(/_/g,"/"); const bin = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(bin, c => c.charCodeAt(0)).buffer; }
+  function bufToB64(buf){ const bytes = new Uint8Array(buf); let s = ""; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,""); }
+  async function passkeyLogin(){ const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin; const opt = await (await fetch(base + "/auth/webauthn/login/options", { method:"POST", credentials:"include" })).json(); opt.challenge = b64ToBuf(opt.challenge); const cred = await navigator.credentials.get({ publicKey: opt }); const res = await fetch(base + "/auth/webauthn/login/verify", { method:"POST", credentials:"include", headers:{"content-type":"application/json"}, body: JSON.stringify({ id: cred.id, rawId: bufToB64(cred.rawId), challenge: bufToB64(opt.challenge), response: { authenticatorData: bufToB64(cred.response.authenticatorData), clientDataJSON: bufToB64(cred.response.clientDataJSON), signature: bufToB64(cred.response.signature), userHandle: cred.response.userHandle ? bufToB64(cred.response.userHandle) : null } }) }); if(!res.ok) throw new Error((await res.json().catch(()=>({}))).error || "Passkey sign-in failed"); await refreshAccount(); }
+  async function passkeyEnroll(){ requireSignedIn(); const base = $("apiBase").value.trim().replace(/\/+$/,"") || location.origin; const opt = await (await fetch(base + "/auth/webauthn/register/options", { method:"POST", credentials:"include" })).json(); opt.challenge = b64ToBuf(opt.challenge); opt.user.id = b64ToBuf(opt.user.id); opt.excludeCredentials = (opt.excludeCredentials || []).map(c => ({...c, id:b64ToBuf(c.id)})); const cred = await navigator.credentials.create({ publicKey: opt }); const res = await fetch(base + "/auth/webauthn/register/verify", { method:"POST", credentials:"include", headers:{"content-type":"application/json"}, body: JSON.stringify({ id: cred.id, rawId: bufToB64(cred.rawId), challenge: bufToB64(opt.challenge), transports: cred.response.getTransports ? cred.response.getTransports() : [], response: { attestationObject: bufToB64(cred.response.attestationObject), clientDataJSON: bufToB64(cred.response.clientDataJSON) } }) }); if(!res.ok) throw new Error((await res.json().catch(()=>({}))).error || "Passkey enrollment failed"); status("accountStatus", "Passkey enrolled for this account."); }
 
   async function api(path, opts={}){
     requireSignedIn();
@@ -537,6 +546,9 @@
   });
 
   $("btnMapDatabase").addEventListener("click", ()=> refreshMapDatabase());
+
+  $("btnPasskeyLogin").addEventListener("click", () => passkeyLogin().catch(e=>status("accountStatus", "Passkey error: " + e.message)));
+  $("btnPasskeyEnroll").addEventListener("click", () => passkeyEnroll().catch(e=>status("accountStatus", "Passkey error: " + e.message)));
 
   $("btnRefreshAccount").addEventListener("click", ()=> refreshAccount().then(account=>{
     if(account) refreshCatalog().catch(e=>status("connStatus","Catalog error: " + e.message));

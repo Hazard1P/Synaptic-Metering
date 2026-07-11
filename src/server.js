@@ -8,6 +8,7 @@ import { nanoid } from "nanoid";
 import { openDb } from "./db/db.js";
 import {
   configureApiKeyAuth,
+  createAuthSession,
   googleOAuthCallback,
   loadAuthenticatedAccount,
   logout,
@@ -25,6 +26,12 @@ import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterK
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
 import { generateGenesisInvoiceDraft, genesisRingMonitoring } from "./lib/genesis.js";
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationAssertion,
+  verifyRegistrationResponse
+} from "./lib/webauthn.js";
 
 let startupConfigStatus = { ok: true, issues: [] };
 try{
@@ -555,6 +562,22 @@ app.get("/map/dyson-sphere-ring-1", (req,res,next)=>{
 app.use(loadAuthenticatedAccount(db));
 app.get("/auth/google/start", startGoogleOAuth);
 app.get("/auth/google/callback", googleOAuthCallback(db));
+app.post("/auth/webauthn/register/options", requireAccount, (req,res,next)=>{
+  try{ res.json(generateRegistrationOptions(db, req)); }catch(e){ next(e); }
+});
+app.post("/auth/webauthn/register/verify", requireAccount, (req,res,next)=>{
+  try{ res.json(verifyRegistrationResponse(db, req, req.body || {})); }catch(e){ next(e); }
+});
+app.post("/auth/webauthn/login/options", (req,res,next)=>{
+  try{ res.json(generateAuthenticationOptions(db, req)); }catch(e){ next(e); }
+});
+app.post("/auth/webauthn/login/verify", (req,res,next)=>{
+  try{
+    const result = verifyAuthenticationAssertion(db, req, req.body || {});
+    createAuthSession(db, req, res, result.account_id);
+    res.json({ ok: true });
+  }catch(e){ next(e); }
+});
 app.post("/auth/logout", logout(db));
 app.get("/me", requireAccount, (req,res)=>{
   const identities = db.prepare(`
