@@ -130,6 +130,40 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
   ON auth_sessions(account_id);
 
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  credential_id TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT,
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  UNIQUE(credential_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_account_id
+  ON webauthn_credentials(account_id);
+
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  id TEXT PRIMARY KEY,
+  account_id TEXT,
+  challenge TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK(purpose IN ('registration', 'authentication')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_lookup
+  ON webauthn_challenges(challenge, purpose, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_account_id
+  ON webauthn_challenges(account_id);
+
 
 CREATE TABLE IF NOT EXISTS anchored_assets (
   id TEXT PRIMARY KEY,

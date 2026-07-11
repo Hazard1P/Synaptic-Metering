@@ -114,7 +114,8 @@
           <p class="status-line" id="accountStatus">Checking your account…</p>
           <p class="muted" id="accountDetail">We are loading <code>/me</code> to see whether you are already signed in.</p>
           <div class="actions" id="signedOutActions">
-            <a class="btn primary" href="/auth/google/start">Sign in</a>
+            <a class="btn primary" href="/auth/google/start">Sign in with Google</a>
+            <button class="btn" id="btnPasskeyLogin" type="button">Sign in with passkey</button>
           </div>
         </section>
 
@@ -123,6 +124,7 @@
           <p id="lockedTools" class="muted">Sign in to unlock the console, Genesis, and invoice history links.</p>
           <div class="actions" id="accountLinks" hidden>
             <a class="btn primary" href="/console">Open console</a>
+            <button class="btn" id="btnPasskeyEnroll" type="button">Enroll passkey</button>
             <a class="btn" href="/genesis">Open Genesis</a>
             <a class="btn" href="/console#invoice-history">Invoice history</a>
           </div>
@@ -183,6 +185,11 @@
       $("accountLinks").hidden = false;
     }
 
+    function b64ToBuf(v){ const s = v.replace(/-/g,"+").replace(/_/g,"/"); const bin = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(bin, c => c.charCodeAt(0)).buffer; }
+    function bufToB64(buf){ const bytes = new Uint8Array(buf); let s = ""; bytes.forEach(b => s += String.fromCharCode(b)); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,""); }
+    async function passkeyLogin(){ const opt = await (await fetch("/auth/webauthn/login/options", { method:"POST", credentials:"same-origin" })).json(); opt.challenge = b64ToBuf(opt.challenge); const cred = await navigator.credentials.get({ publicKey: opt }); await fetch("/auth/webauthn/login/verify", { method:"POST", credentials:"same-origin", headers:{"content-type":"application/json"}, body: JSON.stringify({ id: cred.id, rawId: bufToB64(cred.rawId), challenge: bufToB64(opt.challenge), response: { authenticatorData: bufToB64(cred.response.authenticatorData), clientDataJSON: bufToB64(cred.response.clientDataJSON), signature: bufToB64(cred.response.signature), userHandle: cred.response.userHandle ? bufToB64(cred.response.userHandle) : null } }) }).then(r => { if(!r.ok) throw new Error("Passkey sign-in failed"); }); await loadAccountStatus(); }
+    async function passkeyEnroll(){ const opt = await (await fetch("/auth/webauthn/register/options", { method:"POST", credentials:"same-origin" })).json(); opt.challenge = b64ToBuf(opt.challenge); opt.user.id = b64ToBuf(opt.user.id); opt.excludeCredentials = (opt.excludeCredentials || []).map(c => ({...c, id:b64ToBuf(c.id)})); const cred = await navigator.credentials.create({ publicKey: opt }); await fetch("/auth/webauthn/register/verify", { method:"POST", credentials:"same-origin", headers:{"content-type":"application/json"}, body: JSON.stringify({ id: cred.id, rawId: bufToB64(cred.rawId), challenge: bufToB64(opt.challenge), transports: cred.response.getTransports ? cred.response.getTransports() : [], response: { attestationObject: bufToB64(cred.response.attestationObject), clientDataJSON: bufToB64(cred.response.clientDataJSON) } }) }).then(r => { if(!r.ok) throw new Error("Passkey enrollment failed"); }); alert("Passkey enrolled for this account."); }
+
     function setMapDatabaseStatus(state){
       const map = state?.map_database || state || {};
       $("mapAuthStatus").textContent = map.authentication_status === "authenticated_active"
@@ -229,6 +236,8 @@
       }
     }
 
+    $("btnPasskeyLogin").addEventListener("click", () => passkeyLogin().catch(e => showSignedOut(e.message)));
+    $("btnPasskeyEnroll").addEventListener("click", () => passkeyEnroll().catch(e => alert(e.message)));
     $("build").textContent = new Date().toISOString();
     loadAccountStatus();
     loadMapDatabaseStatus();

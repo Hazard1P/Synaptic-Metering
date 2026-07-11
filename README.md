@@ -238,6 +238,28 @@ COOKIE_SECURE=true
 
 Set `GOOGLE_ALLOWED_DOMAINS` to restrict logins by Google hosted domain or email domain. Set `GOOGLE_ALLOWED_EMAILS` only when login should be limited to a comma-separated list of verified Google identity emails. Set `ADMIN_GOOGLE_EMAILS` to bootstrap matching verified Google identities as internal `admin` accounts on login, and set `BUSINESS_GOOGLE_EMAILS` to record internal business-association metadata for matching verified identities. Keep these lists in the deployment secret manager or environment; do not commit real private emails. Business-association metadata is stored separately from encrypted OAuth token material and is not exposed by public routes such as `/me`. Set `GOOGLE_OAUTH_RETAIN_TOKENS=true` only if the app needs retained Google token material; retained access/refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`.
 
+### WebAuthn passkeys
+
+After a user signs in with Google, they can enroll a browser-native passkey from `/` or `/console`. Passkey login creates the same HTTP-only `auth_sessions` cookie used by the Google OAuth callback.
+
+Passkey routes:
+
+- `POST /auth/webauthn/register/options` — returns a registration challenge for the currently authenticated account.
+- `POST /auth/webauthn/register/verify` — verifies the browser attestation response and stores the credential public key, credential ID, signature counter, transports, account ID, and timestamps.
+- `POST /auth/webauthn/login/options` — returns an authentication challenge for passkey sign-in.
+- `POST /auth/webauthn/login/verify` — verifies the assertion, updates the authenticator counter, and creates an account session cookie.
+
+Production WebAuthn configuration must match the exact browser-facing HTTPS origin and registrable relying-party ID. Set these values explicitly behind reverse proxies or custom domains:
+
+```bash
+WEBAUTHN_ORIGIN=https://<metering-origin>
+WEBAUTHN_RP_ID=<metering-hostname>
+WEBAUTHN_RP_NAME=Synaptic Systems Metering
+WEBAUTHN_CHALLENGE_TTL_MINUTES=5
+```
+
+`WEBAUTHN_ORIGIN` must include scheme and host, for example `https://metering.SynapticSystems.ca`. `WEBAUTHN_RP_ID` must be the host or a registrable parent domain that the browser accepts for that origin, for example `metering.SynapticSystems.ca` or `SynapticSystems.ca`. Passkeys require HTTPS in production; browser APIs generally allow `localhost` only for local development.
+
 ## Production: SynapticSystems.ca web link
 
 Use a dedicated HTTPS deployment URL for this metering app, then link to that URL from SynapticSystems.ca. The URL can be a metering subdomain such as `https://metering.SynapticSystems.ca` or a routed path such as `https://SynapticSystems.ca/metering`, but the value must match the public URL that browsers use to reach the deployed app.
