@@ -24,6 +24,7 @@ import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./li
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
+import { generateGenesisInvoiceDraft, genesisRingMonitoring } from "./lib/genesis.js";
 
 let startupConfigStatus = { ok: true, issues: [] };
 try{
@@ -1323,6 +1324,40 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
         checked: verification.checked
       }
     });
+  }catch(e){ next(e); }
+});
+
+// --- Genesis account synchronization + invoice drafting
+app.get("/genesis/account-sync", requireAccount, (req,res,next)=>{
+  try{
+    const sessionId = req.query?.session_id || null;
+    if(sessionId) loadOwnedSession(db, req, sessionId);
+    const days = req.query?.days || 7;
+    const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
+    res.json(genesisRingMonitoring({
+      db,
+      accountId: req.authAccount.id,
+      sessionId,
+      anchorId,
+      days
+    }));
+  }catch(e){ next(e); }
+});
+
+app.post("/genesis/invoices/draft", requireAccount, (req,res,next)=>{
+  try{
+    const sessionId = req.body?.session_id;
+    if(!sessionId) return res.status(400).json({ error:"missing_session_id" });
+    loadOwnedSession(db, req, sessionId);
+    const invoice = generateGenesisInvoiceDraft({
+      db,
+      accountId: req.authAccount.id,
+      sessionId,
+      days: req.body?.days || 7
+    });
+    if(!invoice) return res.status(404).json({ error:"session_not_found" });
+    if(invoice.forbidden) return rejectForbiddenSession(res);
+    res.status(201).json({ invoice });
   }catch(e){ next(e); }
 });
 
