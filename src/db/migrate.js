@@ -131,6 +131,44 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
   ON auth_sessions(account_id);
 
 
+CREATE TABLE IF NOT EXISTS consents (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  consent_type TEXT NOT NULL,
+  version TEXT NOT NULL,
+  granted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT,
+  source TEXT NOT NULL DEFAULT 'account',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_consents_account_type_active
+  ON consents(account_id, consent_type, revoked_at);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  credential_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  public_key_cose TEXT NOT NULL,
+  sign_count INTEGER NOT NULL DEFAULT 0,
+  transports_json TEXT NOT NULL DEFAULT '[]',
+  attestation_format TEXT,
+  aaguid TEXT,
+  user_verified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT,
+  revoked_at TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  CHECK(public_key_cose <> ''),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_account_id
+  ON webauthn_credentials(account_id, revoked_at);
+
+
 CREATE TABLE IF NOT EXISTS anchored_assets (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,

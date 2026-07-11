@@ -77,6 +77,18 @@ curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
 
+
+### Privacy controls: consents and passkeys
+Authenticated account holders can review and manage explicit privacy choices:
+
+- `GET /me/consents` — list consent records for the signed-in account, including consent type, version, source, granted timestamp, and revoked timestamp when applicable.
+- `POST /me/consents` — grant or revoke a consent. To enable account-session telemetry, grant `{"consent_type":"telemetry","version":"v1"}`. Send `{"consent_type":"telemetry","granted":false}` to revoke active telemetry consent.
+- `DELETE /me/passkeys/:credentialId` — revoke a stored WebAuthn/passkey credential for the signed-in account.
+
+Biometric authentication is device-mediated through WebAuthn/passkeys. The service stores only WebAuthn credential public keys and operational metadata (for example credential id, sign count, transports, timestamps, and revocation state). Raw biometric samples such as fingerprints, face images, or voiceprints are never collected by this service, are never stored in SQLite, and never leave the user’s device as part of passkey authentication.
+
+Account-session submissions to `POST /ndsp/telemetry`, including Google light telemetry flows, require an active `telemetry` consent record. API-key integrations remain controlled by the `telemetry:write` scope and should obtain any required external consent before sending telemetry on behalf of users.
+
 ### Admin database
 All `/admin/*` routes require an admin account session or an API key with explicit admin scopes. Account sessions must belong to an account whose `accounts.role` is `admin`; API-key callers must have `admin:read` or `admin:write` as appropriate, plus route-specific scopes such as `reports:read` or `project:read`.
 

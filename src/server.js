@@ -420,6 +420,8 @@ const REQUIRED_SCHEMA = [
   { table: "accounts", columns: ["id", "role", "created_at", "updated_at"] },
   { table: "account_identities", columns: ["id", "account_id", "provider_name", "provider_subject"] },
   { table: "auth_sessions", columns: ["id", "account_id", "expires_at"] },
+  { table: "consents", columns: ["id", "account_id", "consent_type", "version", "granted_at", "revoked_at", "source"] },
+  { table: "webauthn_credentials", columns: ["credential_id", "account_id", "public_key_cose", "metadata_json", "revoked_at"] },
   { table: "catalog_items", columns: ["id", "label", "unit_price_cents", "currency", "default_qty", "unit_name", "quantity_mode", "auto_increment_by"] },
   { table: "sessions", columns: ["id", "account_id", "seat_id", "status"] },
   { table: "usage_events", columns: ["id", "session_id", "item_id", "seconds", "event_kind", "at"] },
@@ -562,6 +564,66 @@ app.get("/me", requireAccount, (req,res)=>{
     ORDER BY provider_name
   `).all(req.authAccount.id);
   res.json({ account: req.authAccount, identities });
+});
+
+
+app.get("/me/consents", requireAccount, (req,res,next)=>{
+  try{
+    const rows = db.prepare(`
+      SELECT id, consent_type, version, granted_at, revoked_at, source, created_at, updated_at
+      FROM consents
+      WHERE account_id=?
+      ORDER BY consent_type, granted_at DESC, created_at DESC
+    `).all(req.authAccount.id);
+    res.json({ consents: rows });
+  }catch(e){ next(e); }
+});
+
+app.post("/me/consents", requireAccount, (req,res,next)=>{
+  try{
+    const consentType = normalizeConsentType(req.body?.consent_type || req.body?.type);
+    const version = String(req.body?.version || "v1").trim().slice(0, 80);
+    const source = String(req.body?.source || "account").trim().slice(0, 120);
+    const granted = req.body?.granted !== false;
+    if(!consentType) return res.status(400).json({ error:"missing_consent_type" });
+    if(!version) return res.status(400).json({ error:"missing_consent_version" });
+
+    if(!granted){
+      db.prepare(`
+        UPDATE consents
+        SET revoked_at=datetime('now'), updated_at=datetime('now')
+        WHERE account_id=? AND consent_type=? AND revoked_at IS NULL
+      `).run(req.authAccount.id, consentType);
+      return res.json({ ok:true, consent_type: consentType, granted:false });
+    }
+
+    db.prepare(`
+      UPDATE consents
+      SET revoked_at=datetime('now'), updated_at=datetime('now')
+      WHERE account_id=? AND consent_type=? AND revoked_at IS NULL
+    `).run(req.authAccount.id, consentType);
+    const id = "consent_" + nanoid(18);
+    const row = db.prepare(`
+      INSERT INTO consents (id, account_id, consent_type, version, granted_at, source)
+      VALUES (?, ?, ?, ?, datetime('now'), ?)
+      RETURNING id, consent_type, version, granted_at, revoked_at, source, created_at, updated_at
+    `).get(id, req.authAccount.id, consentType, version, source);
+    res.status(201).json({ consent: row });
+  }catch(e){ next(e); }
+});
+
+app.delete("/me/passkeys/:credentialId", requireAccount, (req,res,next)=>{
+  try{
+    const credentialId = String(req.params.credentialId || "").trim();
+    if(!credentialId) return res.status(400).json({ error:"missing_credential_id" });
+    const result = db.prepare(`
+      UPDATE webauthn_credentials
+      SET revoked_at=datetime('now'), updated_at=datetime('now')
+      WHERE account_id=? AND credential_id=? AND revoked_at IS NULL
+    `).run(req.authAccount.id, credentialId);
+    if(result.changes === 0) return res.status(404).json({ error:"passkey_not_found" });
+    res.json({ ok:true, credential_id: credentialId, revoked:true });
+  }catch(e){ next(e); }
 });
 
 app.get("/map/authenticate/:mapId", (req,res,next)=>{
@@ -885,6 +947,29 @@ function auditAdminApiKeyUse(req){
     req.ip || null,
     req.get?.("user-agent") || null
   );
+}
+
+
+function normalizeConsentType(value){
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9:_-]/g, "_").slice(0, 80);
+}
+
+function activeConsent(db, accountId, consentType){
+  return db.prepare(`
+    SELECT id, account_id, consent_type, version, granted_at, revoked_at, source, created_at, updated_at
+    FROM consents
+    WHERE account_id=? AND consent_type=? AND revoked_at IS NULL
+    ORDER BY granted_at DESC, created_at DESC
+    LIMIT 1
+  `).get(accountId, consentType);
+}
+
+function requireActiveConsent(db, accountId, consentType){
+  const row = activeConsent(db, accountId, consentType);
+  if(row) return row;
+  const err = new Error(`${consentType}_consent_required`);
+  err.status = 403;
+  throw err;
 }
 
 function requireAdmin(req){
@@ -1390,12 +1475,13 @@ app.get("/ndsp/state", (req,res)=>{
   res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
 });
 
-app.post("/ndsp/telemetry", (req,res,next)=>{
+app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{
   try{
     requireScope(req, "telemetry:write");
     const id = "t_" + nanoid(18);
     const payload = req.body ?? {};
     const sessionId = payload.session_id || null;
+    if(req.authAccount) requireActiveConsent(db, req.authAccount.id, "telemetry");
     if(sessionId) loadOwnedSession(db, req, sessionId);
     db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, req.auth.accountId, sessionId, JSON.stringify(payload));
 
