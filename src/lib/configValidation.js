@@ -1,4 +1,5 @@
 import { validateAtRestEncryptionSettings } from "../db/db.js";
+import { parseFieldEncryptionKeys } from "./encryption.js";
 
 export const OPTIONAL_ENVIRONMENT_CONFIG = [
   {
@@ -92,6 +93,22 @@ export function validateStartupConfig(env = process.env){
 
   const atRestResult = validateAtRestEncryptionSettings(env);
   issues.push(...atRestResult.issues);
+
+  try{
+    if(parseFieldEncryptionKeys(env).keys.size === 0){
+      issues.push({
+        variable: "FIELD_ENCRYPTION_KEY or FIELD_ENCRYPTION_KEYS",
+        feature: "field-level envelope encryption for invoices, telemetry, OAuth tokens, and account-private intelligence",
+        message: "Configure FIELD_ENCRYPTION_KEY as key_id:32-byte-key or FIELD_ENCRYPTION_KEYS as JSON/CSV keyring for production field encryption."
+      });
+    }
+  }catch(e){
+    issues.push({
+      variable: "FIELD_ENCRYPTION_KEY or FIELD_ENCRYPTION_KEYS",
+      feature: "field-level envelope encryption keyring",
+      message: e.message
+    });
+  }
 
   for(const required of PRODUCTION_REQUIRED_CONFIG){
     if(!hasEnv(env, required.name)){

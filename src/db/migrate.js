@@ -1,6 +1,7 @@
 import { DB_AT_REST_SECURITY, openDb } from "./db.js";
 import { seedMapAssetDigests } from "../lib/mapAuthentication.js";
 import { refreshCatalog } from "../lib/catalog.js";
+import { encryptField, isEncryptedEnvelope, parseFieldEncryptionKeys } from "../lib/encryption.js";
 
 const SCHEMA_VERSION = 1;
 
@@ -9,6 +10,41 @@ const db = openDb();
 function hasColumn(tableName, columnName){
   const cols = db.prepare(`PRAGMA table_info(${tableName})`).all();
   return cols.some(c => c.name === columnName);
+}
+
+function migrationApplied(description){
+  return Boolean(db.prepare("SELECT 1 FROM schema_migrations WHERE description=?").get(description));
+}
+
+function recordMigration(description){
+  db.prepare("INSERT OR IGNORE INTO schema_migrations (version, description) VALUES (?, ?)")
+    .run(Math.abs([...description].reduce((sum, ch) => ((sum * 31) + ch.charCodeAt(0)) | 0, 0)), description);
+}
+
+function encryptExistingColumn(tableName, columnName, idColumn = "id"){
+  const rows = db.prepare(`SELECT ${idColumn} AS id, ${columnName} AS value FROM ${tableName} WHERE ${columnName} IS NOT NULL`).all();
+  const update = db.prepare(`UPDATE ${tableName} SET ${columnName}=? WHERE ${idColumn}=?`);
+  const tx = db.transaction(() => {
+    for(const row of rows){
+      if(typeof row.value === "string" && isEncryptedEnvelope(row.value)) continue;
+      update.run(encryptField(row.value), row.id);
+    }
+  });
+  tx();
+}
+
+function migrateFieldEncryption(){
+  const description = "encrypt sensitive json and token columns with versioned envelopes";
+  if(migrationApplied(description)) return;
+  if(parseFieldEncryptionKeys().keys.size === 0){
+    console.warn("Skipping field encryption backfill: FIELD_ENCRYPTION_KEY or FIELD_ENCRYPTION_KEYS is not configured.");
+    return;
+  }
+  encryptExistingColumn("invoices", "payload_json");
+  encryptExistingColumn("ndsp_telemetry", "payload_json");
+  encryptExistingColumn("oauth_tokens", "access_token_ciphertext");
+  encryptExistingColumn("oauth_tokens", "refresh_token_ciphertext");
+  recordMigration(description);
 }
 
 db.exec(`
@@ -586,6 +622,8 @@ for (const [name, ddl] of catalogColumns){
     db.exec(`ALTER TABLE catalog_items ADD COLUMN ${name} ${ddl}`);
   }
 }
+
+migrateFieldEncryption();
 
 refreshCatalog(db);
 

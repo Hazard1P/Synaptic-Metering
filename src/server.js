@@ -42,6 +42,7 @@ import {
   verifyAuthenticationAssertion,
   verifyRegistrationResponse
 } from "./lib/webauthn.js";
+import { decryptJsonField, encryptJsonField } from "./lib/encryption.js";
 
 let startupConfigStatus = { ok: true, issues: [] };
 try{
@@ -944,7 +945,7 @@ app.get("/admin/reports/quarterly", requireApiKeyOrAccount, (req,res,next)=>{
     for(const row of invoiceRows){
       invoiceCountsByStatus[row.status] = (invoiceCountsByStatus[row.status] || 0) + 1;
       let invoice = {};
-      try{ invoice = JSON.parse(row.payload_json || "{}"); }catch{ invoice = {}; }
+      invoice = decryptJsonField(row.payload_json, {});
       const quantity = invoiceQuantity(invoice);
       const rowSubtotal = cents(invoice?.totals?.subtotal_cents);
       const rowTotal = cents(invoice?.totals?.total_cents ?? invoice?.total_cents);
@@ -1177,7 +1178,7 @@ app.post("/intelligence/light", requireAccount, (req,res,next)=>{
       const sessionId = body.session_id || null;
       if(sessionId) loadOwnedSession(db, req, sessionId);
       db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)")
-        .run(id, req.authAccount.id, sessionId, JSON.stringify({ type: "light_intelligence_segment", segment }));
+        .run(id, req.authAccount.id, sessionId, encryptJsonField({ type: "light_intelligence_segment", segment }));
       return res.status(201).json({ segment, persisted: { ok: true, telemetry_id: id, session_id: sessionId } });
     }
 
@@ -1201,7 +1202,7 @@ app.post("/intelligence/live-entropy", requireApiKeyOrAccount, (req,res,next)=>{
       const sessionId = body.session_id || null;
       if(sessionId) loadOwnedSession(db, req, sessionId);
       db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)")
-        .run(id, req.auth?.accountId || req.authAccount?.id || null, sessionId, JSON.stringify({ type: "live_entropy_index", live_entropy }));
+        .run(id, req.auth?.accountId || req.authAccount?.id || null, sessionId, encryptJsonField({ type: "live_entropy_index", live_entropy }));
       return res.status(201).json({ live_entropy, persisted: { ok: true, telemetry_id: id, session_id: sessionId } });
     }
 
@@ -1695,7 +1696,7 @@ app.get("/invoices", requireAccount, (req,res)=>{
       updated_at: row.updated_at,
       catalog_version: row.catalog_version,
       catalog_snapshot: row.catalog_snapshot_json ? JSON.parse(row.catalog_snapshot_json) : null,
-      invoice: JSON.parse(row.payload_json)
+      invoice: decryptJsonField(row.payload_json, {})
     }))
   });
 });
@@ -1753,7 +1754,7 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
       verificationMethod,
       verificationComplete ? 1 : 0,
       verification.accepted ? 1 : 0,
-      JSON.stringify(storedPayload)
+      encryptJsonField(storedPayload)
     );
 
     const invoice = db.prepare("SELECT * FROM invoices WHERE id=? AND account_id=?").get(id, req.authAccount.id);

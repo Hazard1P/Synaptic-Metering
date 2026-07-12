@@ -19,6 +19,7 @@ process.env.NODE_ENV = "test";
 process.env.DATABASE_PATH = databasePath;
 process.env.API_KEY_DIGESTS = apiKeyDigest;
 process.env.SQLITE_JOURNAL_MODE = "DELETE";
+process.env.FIELD_ENCRYPTION_KEY = "test:" + Buffer.alloc(32, 7).toString("base64");
 
 execFileSync(process.execPath, ["src/db/migrate.js"], {
   cwd: path.resolve(import.meta.dirname, ".."),

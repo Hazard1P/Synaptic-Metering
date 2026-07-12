@@ -1,4 +1,6 @@
 import test from "node:test";
+process.env.FIELD_ENCRYPTION_KEY = process.env.FIELD_ENCRYPTION_KEY || "test:" + Buffer.alloc(32, 7).toString("base64");
+
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,6 +15,7 @@ process.env.SQLITE_JOURNAL_MODE = "DELETE";
 await import("../src/db/migrate.js");
 const { app, getDb } = await import("../src/server.js");
 const { computeSessionSummary } = await import("../src/lib/billing.js");
+const { decryptJsonField } = await import("../src/lib/encryption.js");
 
 const db = getDb();
 const accountId = "acct_test";
@@ -85,7 +88,7 @@ test("accepts matching invoices and stores server-computed fields", async () => 
   assert.equal(json.verification.checked.mismatches.length, 0);
 
   const stored = db.prepare("SELECT session_id, status, payload_json FROM invoices WHERE id=?").get(json.invoice.id);
-  const payload = JSON.parse(stored.payload_json);
+  const payload = decryptJsonField(stored.payload_json, {});
   assert.equal(stored.session_id, sessionId);
   assert.equal(stored.status, "accepted");
   assert.equal(payload.server_computed, true);
