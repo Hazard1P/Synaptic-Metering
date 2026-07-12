@@ -540,6 +540,7 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 - `/genesis` — integrated Genesis page with live activity meter
 - `/console` — console with seconds, quantity, total, and launch link to Genesis
 - `/ndsp/state?session_id=sess_...` — returns NDSP policy/state plus optional meter summary, anchored relevancy, entroptic channel caps/weights, and the NDSP Genesis v3.0 string intelligence descriptor
+- `GET /ndsp/state?session_id=sess_...&include_genesis_telemetrics=1` — includes `genesis_telemetrics` ring monitoring when the session or authenticated request resolves an account
 - `/genesis/account-sync?session_id=sess_...` — returns ring telemetry monitoring with anchored string intelligence digests and entroptic refinement settings
 - `/genesis/structure` — returns the NDSP Genesis v3.0 technical structure: rings, components, data flows, contracts, and roadmap
 - `/genesis/roadmap` — returns the standalone NDSP Genesis roadmap phases
