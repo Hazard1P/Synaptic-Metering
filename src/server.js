@@ -28,7 +28,7 @@ import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./li
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
-import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisRingMonitoring, genesisRoadmap, genesisTechnicalStructure } from "./lib/genesis.js";
+import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisInvoiceEvidence, genesisRingMonitoring, genesisRoadmap, genesisTechnicalStructure } from "./lib/genesis.js";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -1531,27 +1531,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
 
   const id = "inv_" + nanoid(18);
   const issued_at = new Date().toISOString();
-  const anchorAssetId = "dyson-sphere-ring-1";
-  const mapAsset = loadCanonicalMapAsset(anchorAssetId);
-  if(!mapAsset) return res.status(500).json({ error:"map_asset_not_found" });
-  const persistenceSeconds = 60 * 60 * 24 * 90;
-  const mapSessionKey = buildMapInvoiceSessionKey({
-    accountId: req.authAccount.id,
-    sessionId: session_id,
-    invoiceId: id,
-    anchorAssetId,
-    mapId: mapAsset.map_id,
-    mapDigest: mapAsset.digest,
-    issuedAt: issued_at,
-    persistenceSeconds
-  });
-  const mapSessionKeyMetadata = serializeMapInvoiceSessionKey({
-    ...mapSessionKey,
-    account_id: req.authAccount.id,
-    session_id,
-    invoice_id: id,
-    created_at: issued_at
-  });
+  const genesisMonitoring = genesisRingMonitoring({ db, accountId: req.authAccount.id, sessionId: session_id });
+  const genesisEvidence = genesisInvoiceEvidence({ monitoring: genesisMonitoring, accountId: req.authAccount.id, sessionId: session_id });
   const invoice = {
     schema: "synaptics.invoice.v1",
     issued_at,
@@ -1586,6 +1567,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       operation: "Seconds_Of_Intelligence",
       master_key_policy: "master_key governs network genesis and is not bound to a single invoice"
     },
+    genesis: genesisEvidence,
     totals: {
       intelligence_seconds: summary.metrics.intelligence_seconds,
       live_tick_seconds: summary.metrics.live_tick_seconds,

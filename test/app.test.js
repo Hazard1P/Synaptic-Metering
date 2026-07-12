@@ -194,6 +194,28 @@ describe("anchored intelligence defaults", () => {
   });
 });
 
+describe("Google OAuth start", () => {
+  it("returns a user-safe configuration message when Google client ID is missing", async () => {
+    const originalClientId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+
+    try{
+      const res = await request("/auth/google/start", { redirect: "manual" });
+      assert.equal(res.status, 503);
+      const body = await json(res);
+      assert.equal(body.error, "google_oauth_not_configured");
+      assert.equal(body.message, "Google sign-in is not configured for this deployment. Please contact the site administrator.");
+      assert(!String(body.message).includes("GOOGLE_CLIENT_ID"));
+    }finally{
+      if(originalClientId === undefined){
+        delete process.env.GOOGLE_CLIENT_ID;
+      }else{
+        process.env.GOOGLE_CLIENT_ID = originalClientId;
+      }
+    }
+  });
+});
+
 describe("validateStartupConfig", () => {
   it("allows non-production configuration without production-only secrets", () => {
     assert.deepEqual(validateStartupConfig({ NODE_ENV: "test" }), { ok: true, issues: [] });
@@ -322,6 +344,18 @@ describe("invoice generation and import", () => {
     assert.equal(body.invoice.session_id, sessionId);
     assert.equal(body.invoice.account_id, "acct_user");
     assert.equal(body.invoice.totals.total_cents, 24);
+    assert.equal(body.invoice.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(body.invoice.genesis.account_id, "acct_user");
+    assert.equal(body.invoice.genesis.session_id, sessionId);
+    assert.equal(body.invoice.genesis.rings.length, 5);
+    assert.equal(body.invoice.genesis.anchor_ids.includes("dyson-sphere-ring-1"), true);
+    assert.equal(typeof body.invoice.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(body.invoice.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(body.invoice.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(body.invoice.genesis.privacy, /does not store raw thought data/);
+    const stored = db.prepare("SELECT payload_json FROM invoices WHERE id=?").get(body.id);
+    const storedInvoice = JSON.parse(stored.payload_json);
+    assert.deepEqual(storedInvoice.genesis, body.invoice.genesis);
     assert.equal(body.key.key_label, `A1:${sessionId}`);
   });
 
