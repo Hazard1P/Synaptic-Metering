@@ -598,17 +598,27 @@ app.get("/map/server", (req,res,next)=>{
     const authentication = authenticateStoredMapAsset(db, anchorId, {
       includePrivateMetadata: false
     });
-    if(!authentication) return res.status(404).json({ error: "map_asset_not_found" });
-
-    res.json({
+    const baseResponse = {
       server_role: "map_database_reference_anchor",
       operation: "Seconds_Of_Intelligence",
       tick_rate_hz: 1,
       anchor_id: anchorId,
       canonical_public_urls: canonicalPublicUrls(req, anchorId),
+      map_database
+    };
+
+    if(!authentication){
+      return res.status(200).json({
+        ...baseResponse,
+        authentication_status: "map_asset_not_seeded",
+        next_step: "Run `npm run migrate` to seed missing map digest data into map_assets."
+      });
+    }
+
+    res.json({
+      ...baseResponse,
       digest: authentication.digest,
       verification_status: authentication.verification_status,
-      map_database,
       authentication
     });
   }catch(e){ next(e); }

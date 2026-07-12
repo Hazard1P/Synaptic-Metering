@@ -227,6 +227,48 @@ describe("map database route", () => {
     assert.equal(body.map_database.authentication_status, "fallback_anchor_active");
     assert.equal(body.map_database.tick_rate_hz, 1);
   });
+
+  it("returns a degraded map server response when digest seed data is missing", async () => {
+    const seededMapAsset = db.prepare("SELECT * FROM map_assets WHERE map_id = ?").get("dyson-sphere-ring-1");
+    db.prepare("DELETE FROM map_assets WHERE map_id = ?").run("dyson-sphere-ring-1");
+
+    try{
+      const res = await request("/map/server");
+      assert.equal(res.status, 200);
+      const body = await json(res);
+      assert.equal(body.anchor_id, "dyson-sphere-ring-1");
+      assert.equal(body.authentication_status, "map_asset_not_seeded");
+      assert.match(body.next_step, /npm run migrate/);
+      assert.equal(body.map_database.active_anchor_id, "dyson-sphere-ring-1");
+      assert.equal(body.canonical_public_urls.map_server, `${baseUrl}/map/server`);
+      assert.equal(body.digest, undefined);
+      assert.equal(body.authentication, undefined);
+    }finally{
+      if(seededMapAsset){
+        db.prepare(`
+          INSERT INTO map_assets (map_id, anchor_asset_id, digest, verification_status, metadata_json, created_at, updated_at)
+          VALUES (@map_id, @anchor_asset_id, @digest, @verification_status, @metadata_json, @created_at, @updated_at)
+          ON CONFLICT(map_id) DO UPDATE SET
+            anchor_asset_id=excluded.anchor_asset_id,
+            digest=excluded.digest,
+            verification_status=excluded.verification_status,
+            metadata_json=excluded.metadata_json,
+            created_at=excluded.created_at,
+            updated_at=excluded.updated_at
+        `).run(seededMapAsset);
+      }
+    }
+  });
+
+  it("preserves digest authentication fields when map server seed data exists", async () => {
+    const res = await request("/map/server");
+    assert.equal(res.status, 200);
+    const body = await json(res);
+    assert.match(body.digest, /^[a-f0-9]{64}$/);
+    assert.equal(body.verification_status, "verified");
+    assert.equal(body.authentication.map_id, "dyson-sphere-ring-1");
+    assert.equal(body.authentication.digest, body.digest);
+  });
 });
 
 describe("session lifecycle routes", () => {
