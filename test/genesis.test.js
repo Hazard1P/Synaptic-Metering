@@ -73,5 +73,15 @@ describe("Genesis account sync", () => {
     assert.equal(draft.schema, "synaptics.genesis.invoice.draft.v1");
     assert.equal(draft.totals.total_cents, 15);
     assert.equal(draft.lines[0].ring_monitoring.length, 5);
+    assert.equal(draft.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(draft.genesis.account_id, "acct_1");
+    assert.equal(draft.genesis.session_id, "sess_1");
+    assert.equal(draft.genesis.rings.length, 5);
+    assert.equal(draft.genesis.anchor_ids.length, 5);
+    assert.equal(typeof draft.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(draft.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(draft.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(draft.genesis.privacy, /deterministic digests/);
+    assert.match(draft.genesis.privacy, /does not store raw thought data/);
   });
 });
