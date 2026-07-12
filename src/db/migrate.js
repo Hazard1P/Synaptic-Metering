@@ -252,6 +252,33 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_invoice_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_intelligence_network_keys_kind_label
   ON intelligence_network_keys(key_kind, key_label);
 
+CREATE TABLE IF NOT EXISTS map_invoice_session_keys (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  invoice_id TEXT NOT NULL,
+  anchor_asset_id TEXT NOT NULL,
+  map_id TEXT NOT NULL,
+  session_key_digest TEXT NOT NULL CHECK(length(session_key_digest) = 64),
+  session_key_ciphertext TEXT,
+  persistence_seconds INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  persistent_until TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'expired', 'revoked')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT,
+  FOREIGN KEY(map_id) REFERENCES map_assets(map_id) ON DELETE RESTRICT,
+  UNIQUE(invoice_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_map_invoice_session_keys_account_session
+  ON map_invoice_session_keys(account_id, session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_map_invoice_session_keys_digest
+  ON map_invoice_session_keys(session_key_digest);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT,
