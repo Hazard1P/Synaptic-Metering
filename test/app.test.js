@@ -325,6 +325,66 @@ describe("invoice generation and import", () => {
     assert.equal(body.key.key_label, `A1:${sessionId}`);
   });
 
+  it("exposes only the authenticated account's intelligence strings and invoice datablocks", async () => {
+    const userCookie = authCookie("acct_user");
+    const otherCookie = authCookie("acct_other");
+
+    const userSessionRes = await request("/sessions", {
+      method: "POST",
+      headers: { cookie: userCookie },
+      body: JSON.stringify({ seat_id: "seat-intelligence-user" })
+    });
+    assert.equal(userSessionRes.status, 201);
+    const userSession = await json(userSessionRes);
+    assert.match(userSession.account_intelligence.id, /^ais_/);
+
+    assert.equal((await request(`/sessions/${userSession.id}/start`, {
+      method: "POST",
+      headers: { cookie: userCookie },
+      body: JSON.stringify({ item_id: "item_seconds" })
+    })).status, 200);
+    assert.equal((await request(`/sessions/${userSession.id}/heartbeat`, {
+      method: "POST",
+      headers: { cookie: userCookie },
+      body: JSON.stringify({ seconds: 1 })
+    })).status, 200);
+
+    const invoiceRes = await request("/invoices/from-session", {
+      method: "POST",
+      headers: { cookie: userCookie },
+      body: JSON.stringify({ session_id: userSession.id })
+    });
+    assert.equal(invoiceRes.status, 201);
+    const invoiceBody = await json(invoiceRes);
+    assert.match(invoiceBody.invoice.account_intelligence.id, /^ais_/);
+    assert.equal(invoiceBody.invoice.account_intelligence.session_id, userSession.id);
+    assert.equal(invoiceBody.invoice.account_intelligence.datablock_reference.encrypted, true);
+
+    const otherSessionRes = await request("/sessions", {
+      method: "POST",
+      headers: { cookie: otherCookie },
+      body: JSON.stringify({ seat_id: "seat-intelligence-other" })
+    });
+    assert.equal(otherSessionRes.status, 201);
+
+    const userStringsRes = await request("/account/intelligence-strings", { headers: { cookie: userCookie } });
+    assert.equal(userStringsRes.status, 200);
+    const userStrings = await json(userStringsRes);
+    assert(userStrings.intelligence_strings.length >= 2);
+    assert(userStrings.intelligence_strings.every(row => row.account_id === "acct_user"));
+    assert(userStrings.intelligence_strings.some(row => row.invoice_id === invoiceBody.id));
+
+    const datablockRes = await request(`/invoices/${invoiceBody.id}/datablock`, { headers: { cookie: userCookie } });
+    assert.equal(datablockRes.status, 200);
+    const datablockBody = await json(datablockRes);
+    assert.equal(datablockBody.datablock.account_id, "acct_user");
+    assert.equal(datablockBody.datablock.invoice_id, invoiceBody.id);
+    assert.equal(datablockBody.account_intelligence.id, invoiceBody.invoice.account_intelligence.id);
+
+    const forbiddenDatablockRes = await request(`/invoices/${invoiceBody.id}/datablock`, { headers: { cookie: otherCookie } });
+    assert.equal(forbiddenDatablockRes.status, 404);
+  });
+
   it("imports accepted, pending, and rejected invoices according to verification", async () => {
     const sessionId = seedSession({ accountId: "acct_user", live: 1 });
     const cookie = authCookie("acct_user");

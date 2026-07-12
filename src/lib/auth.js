@@ -1,6 +1,7 @@
 import { createCipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
 import { openDb } from "../db/db.js";
+import { upsertAccountIntelligenceRoot } from "./accountIntelligence.js";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "syn_meter_session";
 const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
@@ -429,6 +430,18 @@ function linkGoogleIdentity(db, claims, tokenSet, accountPolicy = {}){
         );
       }
     }
+
+    upsertAccountIntelligenceRoot(db, {
+      accountId: account.id,
+      stringSource: "google_account",
+      datablock: {
+        provider: "google",
+        provider_subject_digest: sha256Hex(String(claims.sub || "")),
+        email_digest: email ? sha256Hex(String(email).toLowerCase()) : null,
+        email_verified: Boolean(emailVerified),
+        initialized_at: now
+      }
+    });
 
     return account;
   });

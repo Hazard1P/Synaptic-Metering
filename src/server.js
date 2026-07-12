@@ -24,6 +24,13 @@ import { buildLiveEntropyIndex } from "./lib/liveEntropyIndex.js";
 import { normalizedServerInvoicePayload, verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
+import {
+  accountIntelligencePayload,
+  decryptAccountIntelligenceDatablock,
+  linkInvoiceIntelligenceString,
+  publicIntelligenceString,
+  upsertSessionIntelligenceString
+} from "./lib/accountIntelligence.js";
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
@@ -1259,7 +1266,18 @@ app.post("/sessions", (req,res,next)=>{
       INSERT INTO sessions (id, account_id, seat_id, status)
       VALUES (?, ?, ?, 'open')
     `).run(id, accountId, body.seat_id ?? null);
-    res.status(201).json({ id, status:"open", account_id: accountId, intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1" }) });
+    const accountIntelligence = upsertSessionIntelligenceString(db, {
+      accountId,
+      sessionId: id,
+      anchorAssetId: "dyson-sphere-ring-1"
+    });
+    res.status(201).json({
+      id,
+      status:"open",
+      account_id: accountId,
+      intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1" }),
+      account_intelligence: accountIntelligencePayload(accountIntelligence)
+    });
   }catch(e){ next(e); }
 });
 
@@ -1459,6 +1477,15 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
   if(summary.session.account_id !== req.authAccount.id) return rejectForbiddenSession(res);
 
   const issued_at = new Date().toISOString();
+  const id = "inv_" + nanoid(18);
+  const accountIntelligencePreview = {
+    id: null,
+    digest: null,
+    session_id,
+    persistence_seconds: 30 * 24 * 60 * 60,
+    map_anchor: { anchor_asset_id: "dyson-sphere-ring-1" },
+    datablock_reference: { table: "account_intelligence_strings", id: null, encrypted: true }
+  };
   const invoice = {
     schema: "synaptics.invoice.v1",
     issued_at,
@@ -1487,6 +1514,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       price_snapshot: summary.catalog_snapshot
     },
     intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1", invoiceKey: `A1:${session_id}` }),
+    account_intelligence: accountIntelligencePreview,
     network: {
       a1_box_key: `A1:${session_id}`,
       operation: "Seconds_Of_Intelligence",
@@ -1502,7 +1530,6 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     }
   };
 
-  const id = "inv_" + nanoid(18);
   const catalogVersion = summary.catalog_versions.join(",") || null;
   const catalogSnapshotJson = JSON.stringify(summary.catalog_snapshot);
 
@@ -1513,6 +1540,17 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     )
     VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?, ?, ?)
   `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice), catalogVersion, catalogSnapshotJson);
+
+  const accountIntelligence = linkInvoiceIntelligenceString(db, {
+    accountId: req.authAccount.id,
+    sessionId: session_id,
+    invoiceId: id,
+    anchorAssetId: "dyson-sphere-ring-1",
+    metrics: summary.metrics
+  });
+  invoice.account_intelligence = accountIntelligencePayload(accountIntelligence);
+  db.prepare("UPDATE invoices SET payload_json=?, updated_at=datetime('now') WHERE id=?")
+    .run(JSON.stringify(invoice), id);
 
   const key = upsertIntelligenceNetworkKey(db, {
     keyKind: "invoice_key",
@@ -1525,6 +1563,28 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
 
   auditLog("invoice_creation", req, { invoice_id: id, session_id, account_id: req.authAccount.id, source: "generated", status: "accepted" });
   res.status(201).json({ id, invoice, key });
+});
+
+app.get("/account/intelligence-strings", requireAccount, (req,res)=>{
+  const rows = db.prepare(`
+    SELECT id, account_id, session_id, invoice_id, anchor_asset_id, string_digest, string_source,
+      persistence_seconds, created_at, updated_at, datablock_ciphertext
+    FROM account_intelligence_strings
+    WHERE account_id=?
+    ORDER BY created_at DESC, id DESC
+  `).all(req.authAccount.id);
+  res.json({ intelligence_strings: rows.map(publicIntelligenceString) });
+});
+
+app.get("/invoices/:id/datablock", requireAccount, (req,res)=>{
+  const row = db.prepare(`
+    SELECT ais.*
+    FROM account_intelligence_strings ais
+    JOIN invoices i ON i.id = ais.invoice_id
+    WHERE i.id=? AND i.account_id=? AND ais.account_id=?
+  `).get(req.params.id, req.authAccount.id, req.authAccount.id);
+  if(!row) return res.status(404).json({ error: "invoice_datablock_not_found" });
+  res.json({ account_intelligence: accountIntelligencePayload(row), datablock: decryptAccountIntelligenceDatablock(row) });
 });
 
 app.get("/invoices", requireAccount, (req,res)=>{

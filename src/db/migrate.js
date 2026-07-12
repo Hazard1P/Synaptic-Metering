@@ -130,6 +130,39 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
   ON auth_sessions(account_id);
 
+CREATE TABLE IF NOT EXISTS account_intelligence_strings (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  invoice_id TEXT,
+  anchor_asset_id TEXT NOT NULL DEFAULT 'dyson-sphere-ring-1',
+  string_digest TEXT NOT NULL CHECK(length(string_digest) = 64),
+  string_source TEXT NOT NULL,
+  datablock_json TEXT,
+  datablock_ciphertext TEXT,
+  persistence_seconds INTEGER NOT NULL DEFAULT 2592000,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK(datablock_json IS NOT NULL OR datablock_ciphertext IS NOT NULL),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE SET NULL,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_account_id
+  ON account_intelligence_strings(account_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_session_id
+  ON account_intelligence_strings(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_invoice_id
+  ON account_intelligence_strings(invoice_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_intelligence_strings_session_source
+  ON account_intelligence_strings(account_id, session_id, string_source)
+  WHERE session_id IS NOT NULL AND invoice_id IS NULL;
+
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
@@ -377,6 +410,24 @@ const accountColumns = [
 for (const [name, ddl] of accountColumns){
   if(!hasColumn('accounts', name)){
     db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+const sessionColumns = [
+  ["intelligence_string_id", "TEXT"]
+];
+for (const [name, ddl] of sessionColumns){
+  if(!hasColumn('sessions', name)){
+    db.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+const intelligenceInvoiceColumns = [
+  ["intelligence_string_id", "TEXT"]
+];
+for (const [name, ddl] of intelligenceInvoiceColumns){
+  if(!hasColumn('invoices', name)){
+    db.exec(`ALTER TABLE invoices ADD COLUMN ${name} ${ddl}`);
   }
 }
 
