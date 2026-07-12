@@ -234,11 +234,13 @@ STORAGE_ENCRYPTION_EVIDENCE=<policy-url-ticket-or-runbook-section>
 
 In production, startup validation fails fast with a `StartupConfigError` if any deployment-critical setting is missing. Required production settings are `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, either `PUBLIC_BASE_URL` or `GOOGLE_REDIRECT_URI`, `API_KEY_DIGESTS`, `CORS_ORIGINS`, and the managed encrypted storage attestation variables `DB_AT_REST_ENCRYPTION=managed-encrypted-storage`, `STORAGE_ENCRYPTION_AT_REST=true`, `STORAGE_ENCRYPTION_PROVIDER`, and `STORAGE_ENCRYPTION_EVIDENCE`. `PUBLIC_BASE_URL` must be an absolute `https://` URL in production. Each startup error names the missing or invalid variable and the feature it affects so platform logs point directly to the deployment fix.
 
-The Google OAuth authorized redirect URI must exactly match the callback URL used by the app:
+The Google OAuth authorized redirect URI must exactly match the callback URL used by the app. `GET /auth/google/start` cannot complete the sign-in redirect until `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and either `PUBLIC_BASE_URL` or `GOOGLE_REDIRECT_URI` are set in the deployment secret manager or local `.env`, and the resulting callback URL is registered exactly in Google Cloud Console. A missing `GOOGLE_CLIENT_ID` returns a safe configuration message to users instead of starting OAuth.
 
 ```text
 https://<metering-origin-or-host-and-mounted-path>/auth/google/callback
 ```
+
+For example, set either `PUBLIC_BASE_URL=https://<your-public-app-origin>` so the app derives `/auth/google/callback`, or set `GOOGLE_REDIRECT_URI=https://<your-public-app-origin>/auth/google/callback` directly. Then add that exact URI to the Google OAuth client's **Authorized redirect URIs** list.
 
 Optional OAuth/session configuration:
 
@@ -337,7 +339,8 @@ In the Google Cloud Console OAuth client used by this app:
    https://<metering-origin>/auth/google/callback
    ```
 3. If the app is deployed under a path and the proxy preserves that path for auth routes, register the exact path-aware callback URL that Google will see.
-4. Confirm `GOOGLE_REDIRECT_URI` in the production environment exactly matches one authorized redirect URI, including scheme, host, path, and trailing slash behavior.
+4. Confirm `GOOGLE_REDIRECT_URI` in the production environment exactly matches one authorized redirect URI, including scheme, host, path, and trailing slash behavior. If relying on `PUBLIC_BASE_URL` instead, confirm the derived `https://<your-public-app-origin>/auth/google/callback` URI is the one registered.
+5. Do not expect `/auth/google/start` to work until the deployment environment and Google Cloud Console redirect URI are in exact agreement; mismatches fail before users can complete sign-in.
 
 ### Cross-site embedding cookie requirement
 

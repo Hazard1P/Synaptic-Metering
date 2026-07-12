@@ -194,6 +194,28 @@ describe("anchored intelligence defaults", () => {
   });
 });
 
+describe("Google OAuth start", () => {
+  it("returns a user-safe configuration message when Google client ID is missing", async () => {
+    const originalClientId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+
+    try{
+      const res = await request("/auth/google/start", { redirect: "manual" });
+      assert.equal(res.status, 503);
+      const body = await json(res);
+      assert.equal(body.error, "google_oauth_not_configured");
+      assert.equal(body.message, "Google sign-in is not configured for this deployment. Please contact the site administrator.");
+      assert(!String(body.message).includes("GOOGLE_CLIENT_ID"));
+    }finally{
+      if(originalClientId === undefined){
+        delete process.env.GOOGLE_CLIENT_ID;
+      }else{
+        process.env.GOOGLE_CLIENT_ID = originalClientId;
+      }
+    }
+  });
+});
+
 describe("validateStartupConfig", () => {
   it("allows non-production configuration without production-only secrets", () => {
     assert.deepEqual(validateStartupConfig({ NODE_ENV: "test" }), { ok: true, issues: [] });
