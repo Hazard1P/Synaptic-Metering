@@ -11,6 +11,49 @@ function normalizeQuantity(item, seconds){
   return seconds;
 }
 
+export function intelligenceSecondBillingMark({ sessionId = null, itemId = null, seconds = 1, eventKind = "live_tick", tickSequence = null, eventTimestamp = null, invoiceId = null } = {}){
+  const billable = eventKind === "live_tick";
+  return {
+    schema: "synaptics.billing.intelligence-second-mark.v1",
+    operation: "Seconds_Of_Intelligence",
+    billable,
+    billed_intelligence_second: billable ? Number(seconds || 0) : 0,
+    recovery_adjustment_seconds: eventKind === "recovery_adjustment" ? Number(seconds || 0) : 0,
+    tick_mark: billable ? "billed_intelligence_second" : "non_billable_recovery_adjustment",
+    session_id: sessionId,
+    invoice_id: invoiceId,
+    item_id: itemId,
+    event_kind: eventKind,
+    heartbeat_tick_sequence: tickSequence,
+    heartbeat_event_timestamp: eventTimestamp
+  };
+}
+
+export function buildIntelligenceSecondLedger({ sessionId = null, invoiceId = null, lines = [] } = {}){
+  const lineMarks = lines.map(line => ({
+    item_id: line.item_id,
+    description: line.label ?? line.description ?? null,
+    seconds_collected: Number(line.seconds || 0),
+    billed_intelligence_seconds: Number(line.live_seconds ?? line.seconds ?? 0),
+    recovery_adjustment_seconds: Number(line.recovery_adjustment_seconds || 0),
+    quantity: Number(line.quantity || 0),
+    quantity_unit: line.quantity_unit || "second",
+    tick_mark: "billed_intelligence_second",
+    mark_basis: "one live_tick usage_event equals one billed intelligence second"
+  }));
+  return {
+    schema: "synaptics.billing.intelligence-second-ledger.v1",
+    operation: "Seconds_Of_Intelligence",
+    session_id: sessionId,
+    invoice_id: invoiceId,
+    seconds_collected: lineMarks.reduce((sum, line) => sum + line.seconds_collected, 0),
+    billed_intelligence_seconds: lineMarks.reduce((sum, line) => sum + line.billed_intelligence_seconds, 0),
+    recovery_adjustment_seconds: lineMarks.reduce((sum, line) => sum + line.recovery_adjustment_seconds, 0),
+    invoice_tick_mark: "billed_intelligence_second",
+    lines: lineMarks
+  };
+}
+
 export function computeSessionSummary(db, sessionId){
   const session = db.prepare("SELECT * FROM sessions WHERE id=?").get(sessionId);
   if(!session) return null;
@@ -75,6 +118,12 @@ export function computeSessionSummary(db, sessionId){
       },
       unit_price: centsToMoney(unit, item?.currency ?? "CAD"),
       cost: centsToMoney(costCents, item?.currency ?? "CAD"),
+      billing_mark: intelligenceSecondBillingMark({
+        sessionId,
+        itemId: u.item_id,
+        seconds: liveSeconds,
+        eventKind: "live_tick"
+      })
     };
   });
 
@@ -99,6 +148,7 @@ export function computeSessionSummary(db, sessionId){
     lines,
     catalog_versions: [...new Set(lines.map(l => l.catalog_version).filter(Boolean))],
     catalog_snapshot: lines.map(l => l.price_snapshot),
+    intelligence_second_ledger: buildIntelligenceSecondLedger({ sessionId, lines }),
     total: centsToMoney(totalCents, "CAD")
   };
 }

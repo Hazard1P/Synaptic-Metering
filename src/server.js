@@ -18,7 +18,7 @@ import {
   startGoogleOAuth
 } from "./lib/auth.js";
 import { refreshCatalog } from "./lib/catalog.js";
-import { computeSessionSummary } from "./lib/billing.js";
+import { computeSessionSummary, intelligenceSecondBillingMark } from "./lib/billing.js";
 import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { buildLightIntelligenceSegment } from "./lib/lightIntelligence.js";
 import { buildLiveEntropyIndex } from "./lib/liveEntropyIndex.js";
@@ -35,7 +35,7 @@ import {
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
-import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisInvoiceEvidence, genesisRingMonitoring, genesisRoadmap, genesisTechnicalStructure } from "./lib/genesis.js";
+import { appendTelemetryMonitoringEvent, bindStreamInvoice, computeStreamMetrics, createIntelligenceStream, generateGenesisInvoiceDraft, genesisEntropticSettings, genesisInvoiceEvidence, genesisRingMonitoring, genesisRoadmap, genesisTechnicalStructure, streamLifecycleState } from "./lib/genesis.js";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -1354,7 +1354,15 @@ function existingHeartbeatResult(sessionId, body){
       event_timestamp: rows.find(row => row.heartbeat_event_timestamp)?.heartbeat_event_timestamp || null,
       tick_sequence: rows.find(row => row.heartbeat_tick_sequence !== null && row.heartbeat_tick_sequence !== undefined)?.heartbeat_tick_sequence ?? null
     },
-    intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
+    intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" }),
+    billing_mark: intelligenceSecondBillingMark({
+      sessionId,
+      itemId: rows[0]?.item_id || null,
+      seconds: liveSeconds,
+      eventKind: "live_tick",
+      tickSequence: rows.find(row => row.heartbeat_tick_sequence !== null && row.heartbeat_tick_sequence !== undefined)?.heartbeat_tick_sequence ?? null,
+      eventTimestamp: rows.find(row => row.heartbeat_event_timestamp)?.heartbeat_event_timestamp || null
+    })
   };
 }
 
@@ -1423,7 +1431,15 @@ app.post("/sessions/:id/heartbeat", (req,res,next)=>{
         event_timestamp: body.event_timestamp ?? null,
         tick_sequence: body.tick_sequence ?? null
       },
-      intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" })
+      intelligence: intelligenceTickContext({ db, anchorId: body.anchor_id || "dyson-sphere-ring-1" }),
+      billing_mark: intelligenceSecondBillingMark({
+        sessionId,
+        itemId: sess.current_item_id,
+        seconds: body.seconds,
+        eventKind: "live_tick",
+        tickSequence: body.tick_sequence ?? null,
+        eventTimestamp: body.event_timestamp ?? null
+      })
     });
   }catch(e){ next(e); }
 });
@@ -1550,6 +1566,29 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
 
   const id = "inv_" + nanoid(18);
   const issued_at = new Date().toISOString();
+  const anchorAssetId = "dyson-sphere-ring-1";
+  const canonicalMap = loadCanonicalMapAsset(anchorAssetId) || {
+    map_id: anchorAssetId,
+    anchor_asset_id: anchorAssetId,
+    digest: createHash("sha256").update(anchorAssetId).digest("hex")
+  };
+  const mapSessionKey = buildMapInvoiceSessionKey({
+    accountId: req.authAccount.id,
+    sessionId: session_id,
+    invoiceId: id,
+    anchorAssetId,
+    mapId: canonicalMap.map_id,
+    mapDigest: canonicalMap.digest,
+    issuedAt: issued_at,
+    persistenceSeconds: 30 * 24 * 60 * 60
+  });
+  const mapSessionKeyMetadata = serializeMapInvoiceSessionKey({
+    ...mapSessionKey,
+    account_id: req.authAccount.id,
+    session_id,
+    invoice_id: id,
+    created_at: issued_at
+  });
   const genesisMonitoring = genesisRingMonitoring({ db, accountId: req.authAccount.id, sessionId: session_id });
   const genesisEvidence = genesisInvoiceEvidence({ monitoring: genesisMonitoring, accountId: req.authAccount.id, sessionId: session_id });
   const invoice = {
@@ -1573,7 +1612,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       catalog_effective_to: l.catalog_effective_to,
       price_snapshot: l.price_snapshot,
       unit_price_cents: l.unit_price.cents,
-      line_total_cents: l.cost.cents
+      line_total_cents: l.cost.cents,
+      billing_mark: l.billing_mark
     })),
     catalog: {
       versions: summary.catalog_versions,
@@ -1586,6 +1626,7 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       operation: "Seconds_Of_Intelligence",
       master_key_policy: "master_key governs network genesis and is not bound to a single invoice"
     },
+    intelligence_second_ledger: summary.intelligence_second_ledger,
     genesis: genesisEvidence,
     totals: {
       intelligence_seconds: summary.metrics.intelligence_seconds,
@@ -1640,6 +1681,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       mapSessionKey.status
     );
 
+    const stream = streamLifecycleState({ db, accountId: req.authAccount.id, sessionId: session_id, create: false });
+    if(stream) bindStreamInvoice({ db, stream, invoiceId: id, payload: { source: "generated", billed_intelligence_seconds: summary.metrics.live_tick_seconds } });
     return { key, mapSessionKey: db.prepare("SELECT * FROM map_invoice_session_keys WHERE invoice_id=?").get(id) };
   });
 
@@ -1648,7 +1691,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
   invoice.map_session_key = persistedMapSessionKey;
 
   auditLog("invoice_creation", req, { invoice_id: id, session_id, account_id: req.authAccount.id, source: "generated", status: "accepted" });
-  res.status(201).json({ id, invoice, key: created.key, map_session_key: persistedMapSessionKey });
+  const stream = streamLifecycleState({ db, accountId: req.authAccount.id, sessionId: session_id, create: false });
+  res.status(201).json({ id, invoice, key: created.key, map_session_key: persistedMapSessionKey, stream });
 });
 
 app.get("/account/intelligence-strings", requireAccount, (req,res)=>{
@@ -1856,7 +1900,7 @@ app.get("/ndsp/state", (req,res)=>{
 
   const accountId = summary?.session?.account_id || req.auth?.accountId || req.authAccount?.id || null;
   const latestMetrics = accountId ? computeStreamMetrics({ db, accountId, sessionId }) : null;
-  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null, latest_metrics: latestMetrics });
+  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, billed_intelligence_seconds: summary.metrics.live_tick_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount, intelligence_second_ledger: summary.intelligence_second_ledger } : null, latest_metrics: latestMetrics });
 });
 
 app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{
