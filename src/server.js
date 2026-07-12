@@ -20,6 +20,7 @@ import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
 import { buildLightIntelligenceSegment } from "./lib/lightIntelligence.js";
+import { buildLiveEntropyIndex } from "./lib/liveEntropyIndex.js";
 import { normalizedServerInvoicePayload, verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
@@ -1048,6 +1049,30 @@ app.post("/intelligence/light", requireAccount, (req,res,next)=>{
     }
 
     res.json({ segment, persisted: { ok: false, reason: "persist_false" } });
+  }catch(e){ next(e); }
+});
+
+app.post("/intelligence/live-entropy", requireApiKeyOrAccount, (req,res,next)=>{
+  try{
+    requireScope(req, "intelligence:read");
+    const body = req.body || {};
+    const live_entropy = buildLiveEntropyIndex({
+      db,
+      strings: body.strings_of_intelligence || body.strings || body.string || [],
+      anchorId: body.anchor_id || "live-entropy-index"
+    });
+
+    if(body.persist === true){
+      requireScope(req, "telemetry:write");
+      const id = "t_" + nanoid(18);
+      const sessionId = body.session_id || null;
+      if(sessionId) loadOwnedSession(db, req, sessionId);
+      db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)")
+        .run(id, req.auth?.accountId || req.authAccount?.id || null, sessionId, JSON.stringify({ type: "live_entropy_index", live_entropy }));
+      return res.status(201).json({ live_entropy, persisted: { ok: true, telemetry_id: id, session_id: sessionId } });
+    }
+
+    res.json({ live_entropy, persisted: { ok: false, reason: "persist_false" } });
   }catch(e){ next(e); }
 });
 
