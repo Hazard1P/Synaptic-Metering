@@ -29,7 +29,10 @@ npm run dev
 Test:
 
 ```bash
+# Basic uptime/liveness only: confirms the Express process can answer HTTP.
 curl http://localhost:8080/health
+
+# Deployment readiness: use this for load balancers/orchestrators before sending traffic.
 curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
@@ -72,7 +75,10 @@ API-key scopes are loaded from SQLite (`api_keys.scopes`) for every request. Adm
 The public `/` page is an account entry point for SynapticSystems.ca visitors. Keep API-key and curl examples here in the README for administrators and developers:
 
 ```bash
+# Basic uptime/liveness only: confirms the Express process can answer HTTP.
 curl http://localhost:8080/health
+
+# Deployment readiness: use this for load balancers/orchestrators before sending traffic.
 curl http://localhost:8080/ready
 curl -H "x-api-key: $API_KEY" http://localhost:8080/catalog
 ```
@@ -434,10 +440,12 @@ The API emits newline-delimited structured JSON logs to stdout/stderr for ingest
 - `master_key_change`
 - `session_close`
 
-Readiness and metrics endpoints:
+Health, readiness, and metrics endpoints:
 
-- `GET /ready` — returns HTTP 200 when SQLite answers `SELECT 1`, otherwise HTTP 503 with a `request_id` in the error body.
-- `GET /metrics` — exposes minimal Prometheus-compatible platform metrics, currently `synaptics_metering_ready` as `1` or `0`.
+- `GET /health` — shallow liveness only. HTTP 200 means the Express process is alive and can answer HTTP; it does **not** prove startup configuration, SQLite schema, migrations, or seeded map assets are ready. Use it for basic uptime checks only.
+- `GET /ready` — deployment readiness. Returns HTTP 200 only when startup configuration is valid, SQLite answers `SELECT 1`, required tables/columns exist, `schema_migrations` has an applied schema version, and the canonical Dyson map asset seed is present and verified. Returns HTTP 503 with `startup_config_ok`, `database`, schema status, missing schema details, and `map_asset_seed` status when the instance should not receive traffic.
+- `GET /health/full` — verbose readiness-style diagnostic with startup configuration, database, schema, migration, and map asset seed status. It uses the same readiness result as `/ready`.
+- `GET /metrics` — exposes minimal Prometheus-compatible platform metrics, currently `synaptics_metering_ready` as `1` or `0` for shallow database reachability.
 
 Expected production alerts:
 
@@ -507,7 +515,7 @@ npm run migrate
 npm start
 ```
 
-`npm run migrate` creates or updates the required SQLite tables and records the applied schema version in `schema_migrations`. `npm start` should run only after that command exits successfully. Configure load balancers, orchestrators, and uptime checks to use `GET /ready` instead of `/health` for traffic readiness; `/ready` returns `503` until required tables, columns, and an applied schema version are present.
+`npm run migrate` creates or updates the required SQLite tables, records the applied schema version in `schema_migrations`, and seeds required static map asset records. `npm start` should run only after that command exits successfully. Configure load balancers and orchestrators to use `GET /ready` for traffic readiness; `/ready` returns `503` until startup configuration is valid, required tables and columns exist, an applied schema version is present, and the canonical map asset seed is verified. Use `GET /health` only for basic uptime/liveness checks because it only confirms the Express process is alive.
 
 For container deployments, this repository's `Dockerfile` runs `node src/db/migrate.js && node src/server.js` so a single-container deployment migrates the mounted SQLite database before starting the API process. In multi-replica or rolling deployments, prefer a release job/init job that runs `npm run migrate` once against the shared database, then start API containers with `npm start` and gate traffic on `/ready`.
 
