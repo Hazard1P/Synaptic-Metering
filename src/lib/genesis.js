@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { nanoid } from "nanoid";
 import { centsToMoney, computeSessionSummary } from "./billing.js";
 import { intelligenceTickContext, mapDatabaseStatus } from "./anchoredIntelligence.js";
 import { decryptJsonField } from "./encryption.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ANCHOR_ID = "dyson-sphere-ring-1";
-const GENESIS_CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0";
+export const GENESIS_CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0";
 const ENTROPTIC_WEIGHTS = Object.freeze({
   c_load: 0.26,
   s_var: 0.20,
@@ -95,6 +96,141 @@ function shannonEntropy(value){
 
 function clampUnit(value){
   return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function roundMetric(value){
+  return Number((clampUnit(value) * 100).toFixed(2));
+}
+
+function coefficientStability(values){
+  if(values.length < 2) return values.length ? 1 : 0.5;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
+  const stddev = Math.sqrt(variance);
+  return clampUnit(1 - (stddev / Math.max(mean, 1)));
+}
+
+function safeAll(db, sql, ...params){
+  try{ return db.prepare(sql).all(...params); }catch{ return []; }
+}
+
+function safeRun(db, sql, ...params){
+  try{ db.prepare(sql).run(...params); return true; }catch{ return false; }
+}
+
+function metricStreamId(accountId, sessionId){
+  return sessionId || `account:${accountId}`;
+}
+
+function collectMetricBasis({ db, accountId, sessionId = null, monitoring = null, now = new Date() }){
+  const telemetryParams = [accountId];
+  let sessionFilter = "";
+  if(sessionId){
+    sessionFilter = " AND session_id=?";
+    telemetryParams.push(sessionId);
+  }
+  const telemetryRows = safeAll(db, `
+    SELECT id, session_id, at, payload_json
+    FROM ndsp_telemetry
+    WHERE account_id=?${sessionFilter}
+    ORDER BY at ASC, id ASC
+    LIMIT 250
+  `, ...telemetryParams);
+  const telemetry = telemetryRows.map(row => ({
+    id: row.id,
+    session_id: row.session_id,
+    at: row.at,
+    payload: parseJson(row.payload_json, {})
+  }));
+  const usage = sessionId ? safeAll(db, `
+    SELECT seconds, event_kind, heartbeat_event_timestamp, heartbeat_tick_sequence, at
+    FROM usage_events
+    WHERE session_id=?
+    ORDER BY COALESCE(heartbeat_tick_sequence, 9223372036854775807), at ASC, id ASC
+    LIMIT 500
+  `, sessionId) : [];
+  const rings = monitoring?.rings || [];
+  const ringStatuses = rings.map(ring => ({
+    ring_id: ring.id,
+    status: ring.status,
+    telemetry_events: ring.telemetry_events || 0,
+    anchor_available: Boolean(ring.map_database?.available || ring.intelligence?.anchored_asset),
+    entropy_ratio: ring.string_intelligence?.entropy_ratio ?? 0
+  }));
+  const telemetryEntropy = telemetry.map(item => {
+    const source = item.payload?.genesis_string || item.payload?.string_intelligence || JSON.stringify(item.payload || {});
+    const str = String(source || "");
+    const maxEntropy = str.length > 1 ? Math.log2(new Set(str).size || 1) : 0;
+    return maxEntropy ? clampUnit(shannonEntropy(str) / maxEntropy) : 0;
+  });
+  return {
+    stream_id: metricStreamId(accountId, sessionId),
+    account_id: accountId,
+    session_id: sessionId,
+    computed_at: now.toISOString(),
+    telemetry_count: telemetry.length,
+    telemetry_session_count: new Set(telemetry.map(item => item.session_id).filter(Boolean)).size,
+    telemetry_entropy_window: telemetryEntropy.slice(-ENTROPTIC_WINDOW_TICKS),
+    ring_statuses: ringStatuses,
+    usage_events: usage.map(row => ({
+      seconds: Number(row.seconds) || 0,
+      event_kind: row.event_kind || "live_tick",
+      heartbeat_event_timestamp: row.heartbeat_event_timestamp || null,
+      heartbeat_tick_sequence: row.heartbeat_tick_sequence ?? null,
+      at: row.at
+    }))
+  };
+}
+
+export function computeCoherenceScore(basis){
+  const entropyStability = coefficientStability(basis.telemetry_entropy_window || []);
+  const syncedRings = (basis.ring_statuses || []).filter(ring => ring.status === "telemetry_synced").length;
+  const ringCoverage = (basis.ring_statuses || []).length ? syncedRings / basis.ring_statuses.length : 0;
+  const anchorCoverage = (basis.ring_statuses || []).length ? (basis.ring_statuses.filter(ring => ring.anchor_available).length / basis.ring_statuses.length) : 0;
+  return roundMetric((entropyStability * 0.45) + (ringCoverage * 0.35) + (anchorCoverage * 0.20));
+}
+
+export function computeContingencyScore(basis){
+  const telemetryDepth = clampUnit((basis.telemetry_count || 0) / Math.max((basis.ring_statuses || []).length, 1));
+  const sessionSpecific = basis.session_id ? clampUnit((basis.usage_events || []).length / 5) : clampUnit((basis.telemetry_session_count || 0) / 3);
+  const anchorCoverage = (basis.ring_statuses || []).length ? (basis.ring_statuses.filter(ring => ring.anchor_available).length / basis.ring_statuses.length) : 0;
+  return roundMetric((telemetryDepth * 0.40) + (sessionSpecific * 0.35) + (anchorCoverage * 0.25));
+}
+
+export function computeContinuityScore(basis){
+  const usage = basis.usage_events || [];
+  if(!usage.length) return roundMetric((basis.telemetry_count || 0) ? 0.35 : 0.1);
+  const liveSeconds = usage.filter(event => event.event_kind === "live_tick").reduce((sum, event) => sum + event.seconds, 0);
+  const totalSeconds = usage.reduce((sum, event) => sum + event.seconds, 0) || 1;
+  const liveRatio = clampUnit(liveSeconds / totalSeconds);
+  const sequences = usage.map(event => event.heartbeat_tick_sequence).filter(value => value !== null && value !== undefined).map(Number).sort((a, b) => a - b);
+  let sequenceContinuity = sequences.length ? 1 : 0.65;
+  if(sequences.length > 1){
+    const gaps = sequences.slice(1).filter((value, index) => value - sequences[index] > 1).length;
+    sequenceContinuity = clampUnit(1 - (gaps / (sequences.length - 1)));
+  }
+  return roundMetric((liveRatio * 0.55) + (sequenceContinuity * 0.45));
+}
+
+export function computeStreamMetrics({ db, accountId, sessionId = null, monitoring = null, now = new Date(), store = true } = {}){
+  const basis = collectMetricBasis({ db, accountId, sessionId, monitoring, now });
+  const metrics = {
+    stream_id: basis.stream_id,
+    account_id: accountId,
+    session_id: sessionId,
+    coherence: computeCoherenceScore(basis),
+    contingency: computeContingencyScore(basis),
+    continuity: computeContinuityScore(basis),
+    computed_at: basis.computed_at,
+    basis_json: basis
+  };
+  if(store){
+    safeRun(db, `
+      INSERT INTO ndsp_stream_metrics (stream_id, account_id, session_id, coherence, contingency, continuity, computed_at, basis_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, metrics.stream_id, metrics.account_id, metrics.session_id, metrics.coherence, metrics.contingency, metrics.continuity, metrics.computed_at, JSON.stringify(basis));
+  }
+  return metrics;
 }
 
 export function genesisEntropticSettings({ anchoredAsset = null, relevancy = null } = {}){
@@ -227,7 +363,7 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     };
   });
 
-  return {
+  const response = {
     system: "genesis",
     account_id: accountId,
     session_id: sessionId,
@@ -238,6 +374,146 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     string_intelligence_system: "NDSP Genesis v3.0 normalized anchored string intelligence",
     rings
   };
+  response.latest_metrics = computeStreamMetrics({ db, accountId, sessionId, monitoring: response, now });
+  return response;
+}
+
+export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
+  const rings = (monitoring?.rings || []).map(ring => ({
+    ring_id: ring.id,
+    ordinal: ring.ordinal,
+    anchor_id: ring.anchor_id,
+    role: ring.role,
+    status: ring.status,
+    telemetry_events: ring.telemetry_events,
+    latest_telemetry_at: ring.latest_telemetry_at,
+    string_intelligence_digest: ring.string_intelligence?.digest || null,
+    string_intelligence_basis: ring.string_intelligence?.monitoring_basis || null,
+    entropy_ratio: ring.string_intelligence?.entropy_ratio ?? null,
+    relevancy_day_index: ring.string_intelligence?.relevancy_day_index ?? null
+  }));
+  return {
+    schema: "synaptics.ndsp.genesis.invoice-evidence.v1",
+    core_version: GENESIS_CORE_VERSION,
+    account_id: accountId ?? monitoring?.account_id ?? null,
+    session_id: sessionId ?? monitoring?.session_id ?? null,
+    monitoring_summary: {
+      system: monitoring?.system || "genesis",
+      anchor_id: monitoring?.anchor_id || DEFAULT_ANCHOR_ID,
+      ring_count: rings.length,
+      telemetry_synced_rings: rings.filter(ring => ring.status === "telemetry_synced").length,
+      awaiting_telemetry_rings: rings.filter(ring => ring.status === "awaiting_telemetry").length,
+      string_intelligence_system: monitoring?.string_intelligence_system || "NDSP Genesis v3.0 normalized anchored string intelligence"
+    },
+    rings,
+    string_intelligence_digests: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.string_intelligence_digest])),
+    anchor_ids: rings.map(ring => ring.anchor_id),
+    telemetry_event_counts: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.telemetry_events])),
+    latest_telemetry_timestamps: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.latest_telemetry_at])),
+    privacy: "Stores deterministic digests, ring monitoring summaries, anchor IDs, event counts, and timestamps only; does not store raw thought data, raw biometric data, or raw telemetry payload strings."
+  };
+}
+
+
+export function computeStreamScores({ telemetry = [], events = [] } = {}){
+  const payloads = telemetry.map(item => item.payload || parseJson(item.payload_json, {}));
+  const count = payloads.length;
+  const anchors = new Set(payloads.map(p => p.anchor_id || p.ring_id || p.ring).filter(Boolean));
+  const sessions = new Set(telemetry.map(item => item.session_id).filter(Boolean));
+  const eventCount = events.length || count;
+  const continuity = clampUnit(count / 10);
+  const coherenceSignals = payloads.map(p => Number(p.coherence ?? p.coherence_score ?? p.derived?.coherence)).filter(Number.isFinite);
+  const coherence = coherenceSignals.length
+    ? clampUnit(coherenceSignals.reduce((sum, value) => sum + value, 0) / coherenceSignals.length / (Math.max(...coherenceSignals) > 1 ? 100 : 1))
+    : clampUnit(1 - (Math.max(0, anchors.size - 1) * 0.15));
+  const contingency = clampUnit((eventCount ? 0.4 : 0) + (sessions.size <= 1 ? 0.3 : 0.1) + (count ? 0.3 : 0));
+  return {
+    continuity: Number(continuity.toFixed(6)),
+    coherence: Number(coherence.toFixed(6)),
+    contingency: Number(contingency.toFixed(6)),
+    telemetry_events: count,
+    anchor_variants: anchors.size,
+    session_variants: sessions.size
+  };
+}
+
+export function resolveIntelligenceStream({ db, accountId, sessionId = null }){
+  if(!accountId) return null;
+  if(sessionId){
+    return db.prepare(`
+      SELECT * FROM ndsp_intelligence_streams
+      WHERE account_id=? AND session_id=?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(accountId, sessionId) || null;
+  }
+  return db.prepare(`
+    SELECT * FROM ndsp_intelligence_streams
+    WHERE account_id=? AND session_id IS NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).get(accountId) || null;
+}
+
+export function createIntelligenceStream({ db, accountId, sessionId = null, anchorAssetId = DEFAULT_ANCHOR_ID, monitoringPolicy = {}, encryptedStateJson = null, status = "active" }){
+  const existing = resolveIntelligenceStream({ db, accountId, sessionId });
+  if(existing) return { stream: existing, created: false };
+  const id = `str_${nanoid(18)}`;
+  db.prepare(`
+    INSERT INTO ndsp_intelligence_streams (id, account_id, session_id, anchor_asset_id, status, core_version, monitoring_policy_json, encrypted_state_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, accountId, sessionId, anchorAssetId, status, GENESIS_CORE_VERSION, JSON.stringify(monitoringPolicy || {}), encryptedStateJson);
+  const stream = db.prepare("SELECT * FROM ndsp_intelligence_streams WHERE id=?").get(id);
+  appendStreamEvent({ db, stream, eventType: "stream_created", payload: { anchor_asset_id: anchorAssetId, status } });
+  return { stream, created: true };
+}
+
+export function appendStreamEvent({ db, stream, eventType, telemetryId = null, invoiceId = null, scores = null, payload = {} }){
+  const id = `stre_${nanoid(18)}`;
+  db.prepare(`
+    INSERT INTO ndsp_intelligence_stream_events (id, stream_id, account_id, session_id, event_type, telemetry_id, invoice_id, scores_json, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, stream.id, stream.account_id, stream.session_id || null, eventType, telemetryId, invoiceId, scores ? JSON.stringify(scores) : null, JSON.stringify(payload || {}));
+  return db.prepare("SELECT * FROM ndsp_intelligence_stream_events WHERE id=?").get(id);
+}
+
+export function appendTelemetryMonitoringEvent({ db, stream, telemetryId, payload = {} }){
+  const telemetryRows = db.prepare(`
+    SELECT id, session_id, at, payload_json
+    FROM ndsp_telemetry
+    WHERE account_id=? AND (? IS NULL OR session_id=?)
+    ORDER BY at DESC, id DESC
+    LIMIT 100
+  `).all(stream.account_id, stream.session_id || null, stream.session_id || null);
+  const scores = computeStreamScores({ telemetry: telemetryRows });
+  db.prepare("UPDATE ndsp_intelligence_streams SET status='monitoring', last_monitored_at=datetime('now') WHERE id=?").run(stream.id);
+  return appendStreamEvent({ db, stream, eventType: "telemetry_ingested", telemetryId, scores, payload });
+}
+
+export function bindStreamInvoice({ db, stream, invoiceId, payload = {} }){
+  db.prepare("UPDATE ndsp_intelligence_streams SET status='invoice_bound', last_monitored_at=datetime('now') WHERE id=?").run(stream.id);
+  appendStreamEvent({ db, stream, eventType: "status_changed", invoiceId, payload: { status: "invoice_bound" } });
+  return appendStreamEvent({ db, stream, eventType: "invoice_bound", invoiceId, payload });
+}
+
+export function streamLifecycleState({ db, accountId, sessionId = null, anchorAssetId = DEFAULT_ANCHOR_ID, create = true }){
+  let result = { stream: resolveIntelligenceStream({ db, accountId, sessionId }), created: false };
+  if(!result.stream && create) result = createIntelligenceStream({ db, accountId, sessionId, anchorAssetId });
+  if(!result.stream) return null;
+  const events = db.prepare(`
+    SELECT id, event_type, telemetry_id, invoice_id, scores_json, payload_json, created_at
+    FROM ndsp_intelligence_stream_events
+    WHERE stream_id=?
+    ORDER BY created_at DESC, id DESC
+    LIMIT 50
+  `).all(result.stream.id);
+  return {
+    ...result.stream,
+    monitoring_policy: parseJson(result.stream.monitoring_policy_json, {}),
+    encrypted_state_present: Boolean(result.stream.encrypted_state_json),
+    scores: computeStreamScores({ events }),
+    events: events.map(event => ({ ...event, scores: parseJson(event.scores_json, null), payload: parseJson(event.payload_json, {}) }))
+  };
 }
 
 export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7, now = new Date() }){
@@ -246,6 +522,7 @@ export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7
   if(summary.session.account_id !== accountId) return { forbidden: true };
 
   const monitoring = genesisRingMonitoring({ db, accountId, sessionId, days, now });
+  const genesisEvidence = genesisInvoiceEvidence({ monitoring, accountId, sessionId });
   return {
     schema: "synaptics.genesis.invoice.draft.v1",
     status: "draft",
@@ -273,6 +550,6 @@ export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7
       total_cents: summary.total.cents,
       total: centsToMoney(summary.total.cents, summary.total.currency || "CAD")
     },
-    genesis: monitoring
+    genesis: genesisEvidence
   };
 }

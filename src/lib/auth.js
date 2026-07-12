@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
 import { openDb } from "../db/db.js";
-import { encryptField } from "./encryption.js";
+import { upsertAccountIntelligenceRoot } from "./accountIntelligence.js";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "syn_meter_session";
 const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
@@ -284,7 +284,14 @@ export function requireAccount(req, res, next){
 
 export function startGoogleOAuth(req, res, next){
   try{
-    const clientId = requireEnv("GOOGLE_CLIENT_ID");
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if(!clientId){
+      return res.status(503).json({
+        error: "google_oauth_not_configured",
+        message: "Google sign-in is not configured for this deployment. Please contact the site administrator."
+      });
+    }
+
     const redirectUri = googleRedirectUri(req);
     const nonce = randomBytes(24).toString("base64url");
     const signedState = signState(nonce);
@@ -416,6 +423,18 @@ function linkGoogleIdentity(db, claims, tokenSet, accountPolicy = {}){
         );
       }
     }
+
+    upsertAccountIntelligenceRoot(db, {
+      accountId: account.id,
+      stringSource: "google_account",
+      datablock: {
+        provider: "google",
+        provider_subject_digest: sha256Hex(String(claims.sub || "")),
+        email_digest: email ? sha256Hex(String(email).toLowerCase()) : null,
+        email_verified: Boolean(emailVerified),
+        initialized_at: now
+      }
+    });
 
     return account;
   });

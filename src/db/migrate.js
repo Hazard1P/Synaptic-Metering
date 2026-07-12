@@ -166,6 +166,39 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
   ON auth_sessions(account_id);
 
+CREATE TABLE IF NOT EXISTS account_intelligence_strings (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  invoice_id TEXT,
+  anchor_asset_id TEXT NOT NULL DEFAULT 'dyson-sphere-ring-1',
+  string_digest TEXT NOT NULL CHECK(length(string_digest) = 64),
+  string_source TEXT NOT NULL,
+  datablock_json TEXT,
+  datablock_ciphertext TEXT,
+  persistence_seconds INTEGER NOT NULL DEFAULT 2592000,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK(datablock_json IS NOT NULL OR datablock_ciphertext IS NOT NULL),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE SET NULL,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_account_id
+  ON account_intelligence_strings(account_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_session_id
+  ON account_intelligence_strings(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_account_intelligence_strings_invoice_id
+  ON account_intelligence_strings(invoice_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_intelligence_strings_session_source
+  ON account_intelligence_strings(account_id, session_id, string_source)
+  WHERE session_id IS NOT NULL AND invoice_id IS NULL;
+
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
@@ -288,6 +321,33 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_network_keys_invoice_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_intelligence_network_keys_kind_label
   ON intelligence_network_keys(key_kind, key_label);
 
+CREATE TABLE IF NOT EXISTS map_invoice_session_keys (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  invoice_id TEXT NOT NULL,
+  anchor_asset_id TEXT NOT NULL,
+  map_id TEXT NOT NULL,
+  session_key_digest TEXT NOT NULL CHECK(length(session_key_digest) = 64),
+  session_key_ciphertext TEXT,
+  persistence_seconds INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  persistent_until TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'expired', 'revoked')),
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT,
+  FOREIGN KEY(map_id) REFERENCES map_assets(map_id) ON DELETE RESTRICT,
+  UNIQUE(invoice_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_map_invoice_session_keys_account_session
+  ON map_invoice_session_keys(account_id, session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_map_invoice_session_keys_digest
+  ON map_invoice_session_keys(session_key_digest);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   account_id TEXT,
@@ -351,6 +411,25 @@ CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS ndsp_stream_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stream_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  coherence REAL NOT NULL,
+  contingency REAL NOT NULL,
+  continuity REAL NOT NULL,
+  computed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  basis_json TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_stream_metrics_stream
+  ON ndsp_stream_metrics(stream_id, computed_at);
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_stream_metrics_account
+  ON ndsp_stream_metrics(account_id, computed_at);
+
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
@@ -413,6 +492,24 @@ const accountColumns = [
 for (const [name, ddl] of accountColumns){
   if(!hasColumn('accounts', name)){
     db.exec(`ALTER TABLE accounts ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+const sessionColumns = [
+  ["intelligence_string_id", "TEXT"]
+];
+for (const [name, ddl] of sessionColumns){
+  if(!hasColumn('sessions', name)){
+    db.exec(`ALTER TABLE sessions ADD COLUMN ${name} ${ddl}`);
+  }
+}
+
+const intelligenceInvoiceColumns = [
+  ["intelligence_string_id", "TEXT"]
+];
+for (const [name, ddl] of intelligenceInvoiceColumns){
+  if(!hasColumn('invoices', name)){
+    db.exec(`ALTER TABLE invoices ADD COLUMN ${name} ${ddl}`);
   }
 }
 
