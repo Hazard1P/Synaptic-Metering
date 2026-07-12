@@ -1745,13 +1745,18 @@ app.get("/genesis/account-sync", requireAccount, (req,res,next)=>{
     if(sessionId) loadOwnedSession(db, req, sessionId);
     const days = req.query?.days || 7;
     const anchorId = req.query?.anchor_id || "dyson-sphere-ring-1";
-    res.json(genesisRingMonitoring({
+    const monitoring = genesisRingMonitoring({
       db,
       accountId: req.authAccount.id,
       sessionId,
       anchorId,
       days
-    }));
+    });
+    const lifecycle = streamLifecycleState({ db, accountId: req.authAccount.id, sessionId, anchorAssetId: anchorId });
+    if(lifecycle?.events?.[0]?.event_type === "stream_created"){
+      auditLog("stream_creation", req, { stream_id: lifecycle.id, account_id: req.authAccount.id, session_id: sessionId, anchor_asset_id: anchorId });
+    }
+    res.json({ ...monitoring, stream: lifecycle });
   }catch(e){ next(e); }
 });
 
@@ -1819,12 +1824,22 @@ app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{
     const id = "t_" + nanoid(18);
     const payload = req.body ?? {};
     const sessionId = payload.session_id || null;
+    const accountId = req.authAccount?.id || req.auth?.accountId;
+    if(payload.account_id && payload.account_id !== accountId) return res.status(403).json({ error: "telemetry_account_mismatch" });
     if(req.authAccount) requireActiveConsent(db, req.authAccount.id, "telemetry");
     if(sessionId) loadOwnedSession(db, req, sessionId);
-    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, req.auth.accountId, sessionId, JSON.stringify(payload));
+    const streamResult = createIntelligenceStream({ db, accountId, sessionId, anchorAssetId: payload.anchor_id || "dyson-sphere-ring-1" });
+    if(streamResult.stream.account_id !== accountId || (sessionId && streamResult.stream.session_id !== sessionId)){
+      return res.status(403).json({ error: "stream_session_mismatch" });
+    }
+    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, accountId, sessionId, JSON.stringify(payload));
+    const event = appendTelemetryMonitoringEvent({ db, stream: streamResult.stream, telemetryId: id, payload: { ring_id: payload.ring_id || payload.ring || null } });
+    if(streamResult.created) auditLog("stream_creation", req, { stream_id: streamResult.stream.id, account_id: accountId, session_id: sessionId, anchor_asset_id: streamResult.stream.anchor_asset_id });
+    auditLog("stream_telemetry_ingestion", req, { stream_id: streamResult.stream.id, telemetry_id: id, account_id: accountId, session_id: sessionId });
+    auditLog("stream_status_change", req, { stream_id: streamResult.stream.id, status: "monitoring", account_id: accountId, session_id: sessionId });
 
     // Echo back a lightweight state acknowledgment
-    res.json({ ok:true, id, account_id: req.auth.accountId, session_id: sessionId, state: { meta:{ received:true, at:new Date().toISOString() } } });
+    res.json({ ok:true, id, account_id: accountId, session_id: sessionId, stream: streamLifecycleState({ db, accountId, sessionId, create: false }), monitoring_event_id: event.id, state: { meta:{ received:true, at:new Date().toISOString() } } });
   }catch(e){ next(e); }
 });
 

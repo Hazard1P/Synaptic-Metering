@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { nanoid } from "nanoid";
 import { centsToMoney, computeSessionSummary } from "./billing.js";
 import { intelligenceTickContext, mapDatabaseStatus } from "./anchoredIntelligence.js";
 
@@ -409,6 +410,108 @@ export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
     telemetry_event_counts: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.telemetry_events])),
     latest_telemetry_timestamps: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.latest_telemetry_at])),
     privacy: "Stores deterministic digests, ring monitoring summaries, anchor IDs, event counts, and timestamps only; does not store raw thought data, raw biometric data, or raw telemetry payload strings."
+  };
+}
+
+
+export function computeStreamScores({ telemetry = [], events = [] } = {}){
+  const payloads = telemetry.map(item => item.payload || parseJson(item.payload_json, {}));
+  const count = payloads.length;
+  const anchors = new Set(payloads.map(p => p.anchor_id || p.ring_id || p.ring).filter(Boolean));
+  const sessions = new Set(telemetry.map(item => item.session_id).filter(Boolean));
+  const eventCount = events.length || count;
+  const continuity = clampUnit(count / 10);
+  const coherenceSignals = payloads.map(p => Number(p.coherence ?? p.coherence_score ?? p.derived?.coherence)).filter(Number.isFinite);
+  const coherence = coherenceSignals.length
+    ? clampUnit(coherenceSignals.reduce((sum, value) => sum + value, 0) / coherenceSignals.length / (Math.max(...coherenceSignals) > 1 ? 100 : 1))
+    : clampUnit(1 - (Math.max(0, anchors.size - 1) * 0.15));
+  const contingency = clampUnit((eventCount ? 0.4 : 0) + (sessions.size <= 1 ? 0.3 : 0.1) + (count ? 0.3 : 0));
+  return {
+    continuity: Number(continuity.toFixed(6)),
+    coherence: Number(coherence.toFixed(6)),
+    contingency: Number(contingency.toFixed(6)),
+    telemetry_events: count,
+    anchor_variants: anchors.size,
+    session_variants: sessions.size
+  };
+}
+
+export function resolveIntelligenceStream({ db, accountId, sessionId = null }){
+  if(!accountId) return null;
+  if(sessionId){
+    return db.prepare(`
+      SELECT * FROM ndsp_intelligence_streams
+      WHERE account_id=? AND session_id=?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `).get(accountId, sessionId) || null;
+  }
+  return db.prepare(`
+    SELECT * FROM ndsp_intelligence_streams
+    WHERE account_id=? AND session_id IS NULL
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).get(accountId) || null;
+}
+
+export function createIntelligenceStream({ db, accountId, sessionId = null, anchorAssetId = DEFAULT_ANCHOR_ID, monitoringPolicy = {}, encryptedStateJson = null, status = "active" }){
+  const existing = resolveIntelligenceStream({ db, accountId, sessionId });
+  if(existing) return { stream: existing, created: false };
+  const id = `str_${nanoid(18)}`;
+  db.prepare(`
+    INSERT INTO ndsp_intelligence_streams (id, account_id, session_id, anchor_asset_id, status, core_version, monitoring_policy_json, encrypted_state_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, accountId, sessionId, anchorAssetId, status, GENESIS_CORE_VERSION, JSON.stringify(monitoringPolicy || {}), encryptedStateJson);
+  const stream = db.prepare("SELECT * FROM ndsp_intelligence_streams WHERE id=?").get(id);
+  appendStreamEvent({ db, stream, eventType: "stream_created", payload: { anchor_asset_id: anchorAssetId, status } });
+  return { stream, created: true };
+}
+
+export function appendStreamEvent({ db, stream, eventType, telemetryId = null, invoiceId = null, scores = null, payload = {} }){
+  const id = `stre_${nanoid(18)}`;
+  db.prepare(`
+    INSERT INTO ndsp_intelligence_stream_events (id, stream_id, account_id, session_id, event_type, telemetry_id, invoice_id, scores_json, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, stream.id, stream.account_id, stream.session_id || null, eventType, telemetryId, invoiceId, scores ? JSON.stringify(scores) : null, JSON.stringify(payload || {}));
+  return db.prepare("SELECT * FROM ndsp_intelligence_stream_events WHERE id=?").get(id);
+}
+
+export function appendTelemetryMonitoringEvent({ db, stream, telemetryId, payload = {} }){
+  const telemetryRows = db.prepare(`
+    SELECT id, session_id, at, payload_json
+    FROM ndsp_telemetry
+    WHERE account_id=? AND (? IS NULL OR session_id=?)
+    ORDER BY at DESC, id DESC
+    LIMIT 100
+  `).all(stream.account_id, stream.session_id || null, stream.session_id || null);
+  const scores = computeStreamScores({ telemetry: telemetryRows });
+  db.prepare("UPDATE ndsp_intelligence_streams SET status='monitoring', last_monitored_at=datetime('now') WHERE id=?").run(stream.id);
+  return appendStreamEvent({ db, stream, eventType: "telemetry_ingested", telemetryId, scores, payload });
+}
+
+export function bindStreamInvoice({ db, stream, invoiceId, payload = {} }){
+  db.prepare("UPDATE ndsp_intelligence_streams SET status='invoice_bound', last_monitored_at=datetime('now') WHERE id=?").run(stream.id);
+  appendStreamEvent({ db, stream, eventType: "status_changed", invoiceId, payload: { status: "invoice_bound" } });
+  return appendStreamEvent({ db, stream, eventType: "invoice_bound", invoiceId, payload });
+}
+
+export function streamLifecycleState({ db, accountId, sessionId = null, anchorAssetId = DEFAULT_ANCHOR_ID, create = true }){
+  let result = { stream: resolveIntelligenceStream({ db, accountId, sessionId }), created: false };
+  if(!result.stream && create) result = createIntelligenceStream({ db, accountId, sessionId, anchorAssetId });
+  if(!result.stream) return null;
+  const events = db.prepare(`
+    SELECT id, event_type, telemetry_id, invoice_id, scores_json, payload_json, created_at
+    FROM ndsp_intelligence_stream_events
+    WHERE stream_id=?
+    ORDER BY created_at DESC, id DESC
+    LIMIT 50
+  `).all(result.stream.id);
+  return {
+    ...result.stream,
+    monitoring_policy: parseJson(result.stream.monitoring_policy_json, {}),
+    encrypted_state_present: Boolean(result.stream.encrypted_state_json),
+    scores: computeStreamScores({ events }),
+    events: events.map(event => ({ ...event, scores: parseJson(event.scores_json, null), payload: parseJson(event.payload_json, {}) }))
   };
 }
 
