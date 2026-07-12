@@ -25,7 +25,7 @@ import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./li
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
-import { generateGenesisInvoiceDraft, genesisRingMonitoring } from "./lib/genesis.js";
+import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisRingMonitoring } from "./lib/genesis.js";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -1475,14 +1475,22 @@ app.get("/ndsp/state", (req,res)=>{
   const summary = sessionId ? computeSessionSummary(db, sessionId) : null;
   if(summary && !canAccessMeteringSession(req, summary.session)) return rejectForbiddenSession(res);
   // A small, stable policy payload. You can extend this later.
+  const tickContext = intelligenceTickContext({ db });
+  const entropticSettings = genesisEntropticSettings({
+    anchoredAsset: tickContext.anchored_asset,
+    relevancy: tickContext.daily_unix_relevancy
+  });
   const policy = {
-    channelCaps: {
-      c_load: [0,1], s_var:[0,1], circ_drift:[0,1], sys_noise:[0,1], env_flux:[0,1]
-    },
-    tick_rate_hz: 1,
+    channelCaps: entropticSettings.channel_caps,
+    weights: entropticSettings.weights,
+    tick_rate_hz: entropticSettings.tick_rate_hz,
+    window_ticks: entropticSettings.window_ticks,
     persistence: "server-db",
     anchored_assets: listAnchoredAssets(db),
-    rolling_epoch: intelligenceTickContext({ db }).five_day_epoch
+    rolling_epoch: tickContext.five_day_epoch,
+    daily_unix_relevancy: tickContext.daily_unix_relevancy,
+    entroptic_settings: entropticSettings,
+    string_intelligence_system: "NDSP Genesis v3.0 normalized anchored string intelligence"
   };
 
   // Provide a minimal "state" object structure compatible with the UI.
