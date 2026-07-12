@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+process.env.FIELD_ENCRYPTION_KEY = process.env.FIELD_ENCRYPTION_KEY || "test:" + Buffer.alloc(32, 7).toString("base64");
+
 import { genesisEntropticSettings, genesisRingMonitoring, genesisRoadmap, genesisStringIntelligence, genesisTechnicalStructure, generateGenesisInvoiceDraft, relativeDaySchedule } from "../src/lib/genesis.js";
 
 function makeDb(){

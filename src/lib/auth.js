@@ -1,6 +1,7 @@
-import { createCipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { nanoid } from "nanoid";
 import { openDb } from "../db/db.js";
+import { encryptField } from "./encryption.js";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "syn_meter_session";
 const OAUTH_STATE_COOKIE_NAME = "syn_meter_oauth_state";
@@ -201,24 +202,10 @@ function tokenRetentionEnabled(){
   return process.env.GOOGLE_OAUTH_RETAIN_TOKENS === "true";
 }
 
-function tokenEncryptionKey(){
-  const raw = requireEnv("TOKEN_ENCRYPTION_KEY");
-  if(/^[a-f0-9]{64}$/i.test(raw)) return Buffer.from(raw, "hex");
-  const decoded = Buffer.from(raw, "base64");
-  if(decoded.length === 32) return decoded;
-  const utf8 = Buffer.from(raw, "utf8");
-  if(utf8.length === 32) return utf8;
-  throw new Error("TOKEN_ENCRYPTION_KEY must resolve to 32 bytes");
+function encryptToken(value){
+  return encryptField(value);
 }
 
-function encryptToken(value){
-  const key = tokenEncryptionKey();
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${ciphertext.toString("base64url")}`;
-}
 
 export function requireApiKey(req, res, next){
   try{

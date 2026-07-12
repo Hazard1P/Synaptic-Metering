@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { centsToMoney, computeSessionSummary } from "./billing.js";
 import { intelligenceTickContext, mapDatabaseStatus } from "./anchoredIntelligence.js";
+import { decryptJsonField } from "./encryption.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ANCHOR_ID = "dyson-sphere-ring-1";
@@ -195,7 +196,7 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     id: row.id,
     session_id: row.session_id,
     at: row.at,
-    payload: parseJson(row.payload_json, {})
+    payload: decryptJsonField(row.payload_json, {})
   }));
 
   const rings = GENESIS_RINGS.map((ring, index) => {
