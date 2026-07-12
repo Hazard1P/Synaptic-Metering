@@ -1900,7 +1900,19 @@ app.get("/ndsp/state", (req,res)=>{
 
   const accountId = summary?.session?.account_id || req.auth?.accountId || req.authAccount?.id || null;
   const latestMetrics = accountId ? computeStreamMetrics({ db, accountId, sessionId }) : null;
-  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, billed_intelligence_seconds: summary.metrics.live_tick_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount, intelligence_second_ledger: summary.intelligence_second_ledger } : null, latest_metrics: latestMetrics });
+  const includeGenesisTelemetrics = req.query?.include_genesis_telemetrics === "1";
+  const response = {
+    policy,
+    state,
+    meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, billed_intelligence_seconds: summary.metrics.live_tick_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount, intelligence_second_ledger: summary.intelligence_second_ledger } : null,
+    latest_metrics: latestMetrics
+  };
+
+  if(includeGenesisTelemetrics && accountId){
+    response.genesis_telemetrics = genesisRingMonitoring({ db, accountId, sessionId });
+  }
+
+  res.json(response);
 });
 
 app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{
