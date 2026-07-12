@@ -484,12 +484,93 @@ function inspectRequiredSchema(){
   return { ok: missing.length === 0, missing, latestMigration };
 }
 
+function inspectMapAssetSeed(){
+  const expectedMapId = "dyson-sphere-ring-1";
+  try{
+    const authentication = authenticateStoredMapAsset(db, expectedMapId, {
+      includePrivateMetadata: false
+    });
+    if(!authentication){
+      return { ok: false, expected_map_id: expectedMapId, missing: "map_asset_seed" };
+    }
+    return {
+      ok: authentication.verification_status === "verified",
+      expected_map_id: expectedMapId,
+      verification_status: authentication.verification_status,
+      anchor_asset_id: authentication.anchor_asset_id
+    };
+  }catch(e){
+    return { ok: false, expected_map_id: expectedMapId, error: e?.message || "map_asset_seed_unavailable" };
+  }
+}
+
+function buildReadinessStatus(){
+  const database = dbReady();
+  if(!database.ok){
+    return {
+      ok: false,
+      service: "synaptics-seconds-api",
+      startup_config_ok: startupConfigStatus.ok,
+      database,
+      schema: { ok: false, missing: [], latestMigration: null },
+      map_asset_seed: { ok: false, skipped: "database_unavailable" }
+    };
+  }
+
+  const schema = inspectRequiredSchema();
+  const mapAssetSeed = schema.ok
+    ? inspectMapAssetSeed()
+    : { ok: false, skipped: "schema_not_ready" };
+
+  return {
+    ok: startupConfigStatus.ok && schema.ok && mapAssetSeed.ok,
+    service: "synaptics-seconds-api",
+    startup_config_ok: startupConfigStatus.ok,
+    database,
+    schema,
+    map_asset_seed: mapAssetSeed
+  };
+}
+
 // --- health/readiness (public)
-app.get("/health", (req,res)=>res.json({ ok:true, service:"synaptics-seconds-api", startup_config_ok: startupConfigStatus.ok, ts:new Date().toISOString() }));
-app.get("/ready", (req,res)=>{
-  const readiness = dbReady();
-  res.status(readiness.ok ? 200 : 503).json({ ...readiness, service:"synaptics-seconds-api", ts:new Date().toISOString() });
+app.get("/health", (req,res)=>res.json({
+  ok: true,
+  service: "synaptics-seconds-api",
+  status: "alive",
+  description: "Shallow liveness only; the Express process can answer HTTP.",
+  ts: new Date().toISOString()
+}));
+
+app.get("/health/full", (req,res,next)=>{
+  try{
+    const readiness = buildReadinessStatus();
+    res.status(readiness.ok ? 200 : 503).json({
+      ...readiness,
+      schema_version: readiness.schema.latestMigration?.version ?? null,
+      schema_applied_at: readiness.schema.latestMigration?.applied_at ?? null,
+      ts: new Date().toISOString()
+    });
+  }catch(e){ next(e); }
 });
+
+app.get("/ready", (req,res,next)=>{
+  try{
+    const readiness = buildReadinessStatus();
+    res.status(readiness.ok ? 200 : 503).json({
+      ok: readiness.ok,
+      service: readiness.service,
+      startup_config_ok: readiness.startup_config_ok,
+      database: readiness.database,
+      schema_version: readiness.schema.latestMigration?.version ?? null,
+      schema_applied_at: readiness.schema.latestMigration?.applied_at ?? null,
+      schema_ok: readiness.schema.ok,
+      missing: readiness.schema.missing,
+      map_asset_seed: readiness.map_asset_seed,
+      ts: new Date().toISOString()
+    });
+  }catch(e){ next(e); }
+});
+
 app.get("/metrics", (req,res)=>{
   const readiness = dbReady();
   res.type("text/plain; version=0.0.4").send([
@@ -498,20 +579,6 @@ app.get("/metrics", (req,res)=>{
     `synaptics_metering_ready ${readiness.ok ? 1 : 0}`,
     ""
   ].join("\n"));
-});
-
-app.get("/ready", (req,res,next)=>{
-  try{
-    const readiness = inspectRequiredSchema();
-    res.status(readiness.ok ? 200 : 503).json({
-      ok: readiness.ok,
-      service: "synaptics-seconds-api",
-      schema_version: readiness.latestMigration?.version ?? null,
-      schema_applied_at: readiness.latestMigration?.applied_at ?? null,
-      missing: readiness.missing,
-      ts: new Date().toISOString()
-    });
-  }catch(e){ next(e); }
 });
 
 app.get("/intelligence/anchors", (req,res)=>{
