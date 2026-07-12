@@ -1808,7 +1808,9 @@ app.get("/ndsp/state", (req,res)=>{
     history: []
   };
 
-  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null });
+  const accountId = summary?.session?.account_id || req.auth?.accountId || req.authAccount?.id || null;
+  const latestMetrics = accountId ? computeStreamMetrics({ db, accountId, sessionId }) : null;
+  res.json({ policy, state, meter: summary ? { session_id: sessionId, intelligence_seconds: summary.metrics.intelligence_seconds, tracked_quantity: summary.metrics.tracked_quantity, total_cents: summary.total.cents, total_amount: summary.total.amount } : null, latest_metrics: latestMetrics });
 });
 
 app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{

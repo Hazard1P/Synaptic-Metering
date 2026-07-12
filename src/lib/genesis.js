@@ -96,6 +96,141 @@ function clampUnit(value){
   return Math.max(0, Math.min(1, Number(value) || 0));
 }
 
+function roundMetric(value){
+  return Number((clampUnit(value) * 100).toFixed(2));
+}
+
+function coefficientStability(values){
+  if(values.length < 2) return values.length ? 1 : 0.5;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / values.length;
+  const stddev = Math.sqrt(variance);
+  return clampUnit(1 - (stddev / Math.max(mean, 1)));
+}
+
+function safeAll(db, sql, ...params){
+  try{ return db.prepare(sql).all(...params); }catch{ return []; }
+}
+
+function safeRun(db, sql, ...params){
+  try{ db.prepare(sql).run(...params); return true; }catch{ return false; }
+}
+
+function metricStreamId(accountId, sessionId){
+  return sessionId || `account:${accountId}`;
+}
+
+function collectMetricBasis({ db, accountId, sessionId = null, monitoring = null, now = new Date() }){
+  const telemetryParams = [accountId];
+  let sessionFilter = "";
+  if(sessionId){
+    sessionFilter = " AND session_id=?";
+    telemetryParams.push(sessionId);
+  }
+  const telemetryRows = safeAll(db, `
+    SELECT id, session_id, at, payload_json
+    FROM ndsp_telemetry
+    WHERE account_id=?${sessionFilter}
+    ORDER BY at ASC, id ASC
+    LIMIT 250
+  `, ...telemetryParams);
+  const telemetry = telemetryRows.map(row => ({
+    id: row.id,
+    session_id: row.session_id,
+    at: row.at,
+    payload: parseJson(row.payload_json, {})
+  }));
+  const usage = sessionId ? safeAll(db, `
+    SELECT seconds, event_kind, heartbeat_event_timestamp, heartbeat_tick_sequence, at
+    FROM usage_events
+    WHERE session_id=?
+    ORDER BY COALESCE(heartbeat_tick_sequence, 9223372036854775807), at ASC, id ASC
+    LIMIT 500
+  `, sessionId) : [];
+  const rings = monitoring?.rings || [];
+  const ringStatuses = rings.map(ring => ({
+    ring_id: ring.id,
+    status: ring.status,
+    telemetry_events: ring.telemetry_events || 0,
+    anchor_available: Boolean(ring.map_database?.available || ring.intelligence?.anchored_asset),
+    entropy_ratio: ring.string_intelligence?.entropy_ratio ?? 0
+  }));
+  const telemetryEntropy = telemetry.map(item => {
+    const source = item.payload?.genesis_string || item.payload?.string_intelligence || JSON.stringify(item.payload || {});
+    const str = String(source || "");
+    const maxEntropy = str.length > 1 ? Math.log2(new Set(str).size || 1) : 0;
+    return maxEntropy ? clampUnit(shannonEntropy(str) / maxEntropy) : 0;
+  });
+  return {
+    stream_id: metricStreamId(accountId, sessionId),
+    account_id: accountId,
+    session_id: sessionId,
+    computed_at: now.toISOString(),
+    telemetry_count: telemetry.length,
+    telemetry_session_count: new Set(telemetry.map(item => item.session_id).filter(Boolean)).size,
+    telemetry_entropy_window: telemetryEntropy.slice(-ENTROPTIC_WINDOW_TICKS),
+    ring_statuses: ringStatuses,
+    usage_events: usage.map(row => ({
+      seconds: Number(row.seconds) || 0,
+      event_kind: row.event_kind || "live_tick",
+      heartbeat_event_timestamp: row.heartbeat_event_timestamp || null,
+      heartbeat_tick_sequence: row.heartbeat_tick_sequence ?? null,
+      at: row.at
+    }))
+  };
+}
+
+export function computeCoherenceScore(basis){
+  const entropyStability = coefficientStability(basis.telemetry_entropy_window || []);
+  const syncedRings = (basis.ring_statuses || []).filter(ring => ring.status === "telemetry_synced").length;
+  const ringCoverage = (basis.ring_statuses || []).length ? syncedRings / basis.ring_statuses.length : 0;
+  const anchorCoverage = (basis.ring_statuses || []).length ? (basis.ring_statuses.filter(ring => ring.anchor_available).length / basis.ring_statuses.length) : 0;
+  return roundMetric((entropyStability * 0.45) + (ringCoverage * 0.35) + (anchorCoverage * 0.20));
+}
+
+export function computeContingencyScore(basis){
+  const telemetryDepth = clampUnit((basis.telemetry_count || 0) / Math.max((basis.ring_statuses || []).length, 1));
+  const sessionSpecific = basis.session_id ? clampUnit((basis.usage_events || []).length / 5) : clampUnit((basis.telemetry_session_count || 0) / 3);
+  const anchorCoverage = (basis.ring_statuses || []).length ? (basis.ring_statuses.filter(ring => ring.anchor_available).length / basis.ring_statuses.length) : 0;
+  return roundMetric((telemetryDepth * 0.40) + (sessionSpecific * 0.35) + (anchorCoverage * 0.25));
+}
+
+export function computeContinuityScore(basis){
+  const usage = basis.usage_events || [];
+  if(!usage.length) return roundMetric((basis.telemetry_count || 0) ? 0.35 : 0.1);
+  const liveSeconds = usage.filter(event => event.event_kind === "live_tick").reduce((sum, event) => sum + event.seconds, 0);
+  const totalSeconds = usage.reduce((sum, event) => sum + event.seconds, 0) || 1;
+  const liveRatio = clampUnit(liveSeconds / totalSeconds);
+  const sequences = usage.map(event => event.heartbeat_tick_sequence).filter(value => value !== null && value !== undefined).map(Number).sort((a, b) => a - b);
+  let sequenceContinuity = sequences.length ? 1 : 0.65;
+  if(sequences.length > 1){
+    const gaps = sequences.slice(1).filter((value, index) => value - sequences[index] > 1).length;
+    sequenceContinuity = clampUnit(1 - (gaps / (sequences.length - 1)));
+  }
+  return roundMetric((liveRatio * 0.55) + (sequenceContinuity * 0.45));
+}
+
+export function computeStreamMetrics({ db, accountId, sessionId = null, monitoring = null, now = new Date(), store = true } = {}){
+  const basis = collectMetricBasis({ db, accountId, sessionId, monitoring, now });
+  const metrics = {
+    stream_id: basis.stream_id,
+    account_id: accountId,
+    session_id: sessionId,
+    coherence: computeCoherenceScore(basis),
+    contingency: computeContingencyScore(basis),
+    continuity: computeContinuityScore(basis),
+    computed_at: basis.computed_at,
+    basis_json: basis
+  };
+  if(store){
+    safeRun(db, `
+      INSERT INTO ndsp_stream_metrics (stream_id, account_id, session_id, coherence, contingency, continuity, computed_at, basis_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, metrics.stream_id, metrics.account_id, metrics.session_id, metrics.coherence, metrics.contingency, metrics.continuity, metrics.computed_at, JSON.stringify(basis));
+  }
+  return metrics;
+}
+
 export function genesisEntropticSettings({ anchoredAsset = null, relevancy = null } = {}){
   const tickRateHz = Number(anchoredAsset?.tick_rate_hz) || 1;
   return {
@@ -226,7 +361,7 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     };
   });
 
-  return {
+  const response = {
     system: "genesis",
     account_id: accountId,
     session_id: sessionId,
@@ -237,6 +372,8 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     string_intelligence_system: "NDSP Genesis v3.0 normalized anchored string intelligence",
     rings
   };
+  response.latest_metrics = computeStreamMetrics({ db, accountId, sessionId, monitoring: response, now });
+  return response;
 }
 
 export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
