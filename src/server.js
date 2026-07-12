@@ -25,7 +25,7 @@ import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./li
 import { CreateSessionBody, StartBody, HeartbeatBody, ImportInvoiceBody, MasterKeyBody, parseBody } from "./lib/validate.js";
 import { loadOwnedSession, requireScope } from "./lib/authorization.js";
 import { validateStartupConfig } from "./lib/configValidation.js";
-import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisRingMonitoring } from "./lib/genesis.js";
+import { generateGenesisInvoiceDraft, genesisEntropticSettings, genesisRingMonitoring, genesisRoadmap, genesisTechnicalStructure } from "./lib/genesis.js";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -1436,6 +1436,14 @@ app.post("/invoices/import", requireAccount, (req,res,next)=>{
 });
 
 // --- Genesis account synchronization + invoice drafting
+app.get("/genesis/structure", (_req,res)=>{
+  res.json(genesisTechnicalStructure());
+});
+
+app.get("/genesis/roadmap", (_req,res)=>{
+  res.json(genesisRoadmap());
+});
+
 app.get("/genesis/account-sync", requireAccount, (req,res,next)=>{
   try{
     const sessionId = req.query?.session_id || null;
@@ -1490,7 +1498,9 @@ app.get("/ndsp/state", (req,res)=>{
     rolling_epoch: tickContext.five_day_epoch,
     daily_unix_relevancy: tickContext.daily_unix_relevancy,
     entroptic_settings: entropticSettings,
-    string_intelligence_system: "NDSP Genesis v3.0 normalized anchored string intelligence"
+    string_intelligence_system: "NDSP Genesis v3.0 normalized anchored string intelligence",
+    technical_structure: genesisTechnicalStructure({ includeRoadmap: false }),
+    roadmap: genesisRoadmap()
   };
 
   // Provide a minimal "state" object structure compatible with the UI.

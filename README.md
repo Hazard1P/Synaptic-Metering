@@ -528,6 +528,20 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 - `/console` — console with seconds, quantity, total, and launch link to Genesis
 - `/ndsp/state?session_id=sess_...` — returns NDSP policy/state plus optional meter summary, anchored relevancy, entroptic channel caps/weights, and the NDSP Genesis v3.0 string intelligence descriptor
 - `/genesis/account-sync?session_id=sess_...` — returns ring telemetry monitoring with anchored string intelligence digests and entroptic refinement settings
+- `/genesis/structure` — returns the NDSP Genesis v3.0 technical structure: rings, components, data flows, contracts, and roadmap
+- `/genesis/roadmap` — returns the standalone NDSP Genesis roadmap phases
+
+### NDSP Genesis v3.0 technical structure
+
+Genesis v3.0 is modeled as a five-ring, non-extractive metering structure:
+
+1. `ring-1` (`dyson-sphere-ring-1`) — physical map database reference.
+2. `ring-2` (`fabric-universe-ring-map`) — fabric universe ring map reference.
+3. `ring-3` (`major-ursa`) — daily governance alignment reference.
+4. `ring-4` (`cassiopeia`) — constellation reference alignment.
+5. `ring-5` (`isolated-blackholes`) — non-extractive mesh boundary.
+
+The structure endpoint describes implemented components for metering, NDSP policy state, telemetry ingestion, ring monitoring, invoice drafting, and technical planning. Data flows document browser activity to 1 Hz heartbeats, telemetry to ring sync, anchor references to daily Unix relevancy, and metered sessions to invoice drafts. The roadmap currently comes out as four phases: `v3.0-foundation` (shipping), `v3.1-observability` (planned), `v3.2-governance` (planned), and `v3.3-federation` (research).
 
 ### Notes
 - Enter your API key in the Genesis overlay once per tab/session. It is stored only in sessionStorage and is cleared when the browser session ends.
