@@ -19,6 +19,7 @@ import {
 import { refreshCatalog } from "./lib/catalog.js";
 import { computeSessionSummary } from "./lib/billing.js";
 import { MAP_DATABASE_METADATA, intelligenceTickContext, listAnchoredAssets, mapDatabaseStatus } from "./lib/anchoredIntelligence.js";
+import { buildLightIntelligenceSegment } from "./lib/lightIntelligence.js";
 import { normalizedServerInvoicePayload, verifyInvoiceForAccount } from "./lib/invoiceVerification.js";
 import { authenticateStoredMapAsset } from "./lib/mapAuthentication.js";
 import { lookupIntelligenceNetworkKey, upsertIntelligenceNetworkKey } from "./lib/intelligenceNetworkKeys.js";
@@ -1021,6 +1022,34 @@ app.post("/catalog/refresh", (req,res,next)=>{
   }catch(e){ next(e); }
 });
 
+
+app.post("/intelligence/light", requireAccount, (req,res,next)=>{
+  try{
+    requireActiveConsent(db, req.authAccount.id, "location");
+    const body = req.body || {};
+    const segment = buildLightIntelligenceSegment({
+      db,
+      account: req.authAccount,
+      authSessionId: req.authSessionId,
+      client: body.client || req.header("x-client-id") || req.get("user-agent") || "web",
+      gps: body.gps || body.gps_pinpoint || body.location || {},
+      strings: body.strings_of_intelligence || body.strings || body.string || [],
+      anchorId: body.anchor_id || "dyson-sphere-ring-1"
+    });
+
+    if(body.persist === true){
+      requireActiveConsent(db, req.authAccount.id, "telemetry");
+      const id = "t_" + nanoid(18);
+      const sessionId = body.session_id || null;
+      if(sessionId) loadOwnedSession(db, req, sessionId);
+      db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)")
+        .run(id, req.authAccount.id, sessionId, JSON.stringify({ type: "light_intelligence_segment", segment }));
+      return res.status(201).json({ segment, persisted: { ok: true, telemetry_id: id, session_id: sessionId } });
+    }
+
+    res.json({ segment, persisted: { ok: false, reason: "persist_false" } });
+  }catch(e){ next(e); }
+});
 
 app.get("/intelligence/state", (req,res,next)=>{
   try{
