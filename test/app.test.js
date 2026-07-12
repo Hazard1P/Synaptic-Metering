@@ -354,3 +354,65 @@ describe("admin authorization", () => {
     assert.equal(apiKeyRes.status, 201);
   });
 });
+
+describe("NDSP intelligence streams", () => {
+  function grantTelemetry(accountId){
+    db.prepare(`
+      INSERT INTO consents (id, account_id, consent_type, version, granted_at, source, created_at, updated_at)
+      VALUES (?, ?, 'telemetry', 'test', datetime('now'), 'test', datetime('now'), datetime('now'))
+    `).run(`consent_${accountId}_${Date.now()}_${Math.random().toString(16).slice(2)}`, accountId);
+  }
+
+  it("persists stream lifecycle state from account sync", async () => {
+    const sessionId = seedSession({ id: "sess_stream_persist", accountId: "acct_user", live: 4 });
+    const cookie = authCookie("acct_user");
+    const res = await request(`/genesis/account-sync?session_id=${encodeURIComponent(sessionId)}`, { headers: { cookie } });
+    assert.equal(res.status, 200);
+    const body = await json(res);
+    assert.equal(body.stream.account_id, "acct_user");
+    assert.equal(body.stream.session_id, sessionId);
+    assert.equal(body.stream.status, "active");
+    assert.ok(body.stream.events.some(event => event.event_type === "stream_created"));
+
+    const row = db.prepare("SELECT * FROM ndsp_intelligence_streams WHERE account_id=? AND session_id=?").get("acct_user", sessionId);
+    assert.equal(row.id, body.stream.id);
+  });
+
+  it("rejects cross-account telemetry session misuse", async () => {
+    grantTelemetry("acct_user");
+    const sessionId = seedSession({ id: "sess_stream_other", accountId: "acct_other", live: 1 });
+    const res = await request("/ndsp/telemetry", {
+      method: "POST",
+      headers: { cookie: authCookie("acct_user") },
+      body: JSON.stringify({ session_id: sessionId, ring_id: "ring-1", genesis_string: "wrong account" })
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await json(res)).error, "session_account_forbidden");
+  });
+
+  it("links telemetry to the active stream and then binds generated invoices", async () => {
+    grantTelemetry("acct_user");
+    const sessionId = seedSession({ id: "sess_stream_invoice", accountId: "acct_user", live: 6 });
+    const cookie = authCookie("acct_user");
+
+    const telemetryRes = await request("/ndsp/telemetry", {
+      method: "POST",
+      headers: { cookie },
+      body: JSON.stringify({ session_id: sessionId, ring_id: "ring-1", genesis_string: "invoice-linked telemetry", coherence: 92 })
+    });
+    assert.equal(telemetryRes.status, 200);
+    const telemetry = await json(telemetryRes);
+    assert.equal(telemetry.stream.status, "monitoring");
+    assert.ok(telemetry.stream.events.some(event => event.event_type === "telemetry_ingested" && event.telemetry_id === telemetry.id));
+
+    const invoiceRes = await request("/invoices/from-session", {
+      method: "POST",
+      headers: { cookie },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    assert.equal(invoiceRes.status, 201);
+    const invoice = await json(invoiceRes);
+    assert.equal(invoice.stream.status, "invoice_bound");
+    assert.ok(invoice.stream.events.some(event => event.event_type === "invoice_bound" && event.invoice_id === invoice.id));
+  });
+});

@@ -315,6 +315,51 @@ CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS ndsp_intelligence_streams (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  anchor_asset_id TEXT NOT NULL DEFAULT 'dyson-sphere-ring-1',
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'monitoring', 'paused', 'closed', 'invoice_bound')),
+  core_version TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_monitored_at TEXT,
+  monitoring_policy_json TEXT NOT NULL DEFAULT '{}',
+  encrypted_state_json TEXT,
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(anchor_asset_id) REFERENCES anchored_assets(id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ndsp_intelligence_streams_account_session
+  ON ndsp_intelligence_streams(account_id, session_id)
+  WHERE session_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_intelligence_streams_account_status
+  ON ndsp_intelligence_streams(account_id, status);
+
+CREATE TABLE IF NOT EXISTS ndsp_intelligence_stream_events (
+  id TEXT PRIMARY KEY,
+  stream_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  event_type TEXT NOT NULL,
+  telemetry_id TEXT,
+  invoice_id TEXT,
+  scores_json TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(stream_id) REFERENCES ndsp_intelligence_streams(id) ON DELETE CASCADE,
+  FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL,
+  FOREIGN KEY(telemetry_id) REFERENCES ndsp_telemetry(id) ON DELETE SET NULL,
+  FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_intelligence_stream_events_stream
+  ON ndsp_intelligence_stream_events(stream_id, created_at);
+
+
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
