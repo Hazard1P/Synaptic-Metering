@@ -4,7 +4,7 @@ import { intelligenceTickContext, mapDatabaseStatus } from "./anchoredIntelligen
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ANCHOR_ID = "dyson-sphere-ring-1";
-const GENESIS_CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0";
+export const GENESIS_CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0";
 const ENTROPTIC_WEIGHTS = Object.freeze({
   c_load: 0.26,
   s_var: 0.20,
@@ -239,12 +239,49 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
   };
 }
 
+export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
+  const rings = (monitoring?.rings || []).map(ring => ({
+    ring_id: ring.id,
+    ordinal: ring.ordinal,
+    anchor_id: ring.anchor_id,
+    role: ring.role,
+    status: ring.status,
+    telemetry_events: ring.telemetry_events,
+    latest_telemetry_at: ring.latest_telemetry_at,
+    string_intelligence_digest: ring.string_intelligence?.digest || null,
+    string_intelligence_basis: ring.string_intelligence?.monitoring_basis || null,
+    entropy_ratio: ring.string_intelligence?.entropy_ratio ?? null,
+    relevancy_day_index: ring.string_intelligence?.relevancy_day_index ?? null
+  }));
+  return {
+    schema: "synaptics.ndsp.genesis.invoice-evidence.v1",
+    core_version: GENESIS_CORE_VERSION,
+    account_id: accountId ?? monitoring?.account_id ?? null,
+    session_id: sessionId ?? monitoring?.session_id ?? null,
+    monitoring_summary: {
+      system: monitoring?.system || "genesis",
+      anchor_id: monitoring?.anchor_id || DEFAULT_ANCHOR_ID,
+      ring_count: rings.length,
+      telemetry_synced_rings: rings.filter(ring => ring.status === "telemetry_synced").length,
+      awaiting_telemetry_rings: rings.filter(ring => ring.status === "awaiting_telemetry").length,
+      string_intelligence_system: monitoring?.string_intelligence_system || "NDSP Genesis v3.0 normalized anchored string intelligence"
+    },
+    rings,
+    string_intelligence_digests: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.string_intelligence_digest])),
+    anchor_ids: rings.map(ring => ring.anchor_id),
+    telemetry_event_counts: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.telemetry_events])),
+    latest_telemetry_timestamps: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.latest_telemetry_at])),
+    privacy: "Stores deterministic digests, ring monitoring summaries, anchor IDs, event counts, and timestamps only; does not store raw thought data, raw biometric data, or raw telemetry payload strings."
+  };
+}
+
 export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7, now = new Date() }){
   const summary = computeSessionSummary(db, sessionId);
   if(!summary) return null;
   if(summary.session.account_id !== accountId) return { forbidden: true };
 
   const monitoring = genesisRingMonitoring({ db, accountId, sessionId, days, now });
+  const genesisEvidence = genesisInvoiceEvidence({ monitoring, accountId, sessionId });
   return {
     schema: "synaptics.genesis.invoice.draft.v1",
     status: "draft",
@@ -272,6 +309,6 @@ export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7
       total_cents: summary.total.cents,
       total: centsToMoney(summary.total.cents, summary.total.currency || "CAD")
     },
-    genesis: monitoring
+    genesis: genesisEvidence
   };
 }

@@ -322,6 +322,18 @@ describe("invoice generation and import", () => {
     assert.equal(body.invoice.session_id, sessionId);
     assert.equal(body.invoice.account_id, "acct_user");
     assert.equal(body.invoice.totals.total_cents, 24);
+    assert.equal(body.invoice.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(body.invoice.genesis.account_id, "acct_user");
+    assert.equal(body.invoice.genesis.session_id, sessionId);
+    assert.equal(body.invoice.genesis.rings.length, 5);
+    assert.equal(body.invoice.genesis.anchor_ids.includes("dyson-sphere-ring-1"), true);
+    assert.equal(typeof body.invoice.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(body.invoice.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(body.invoice.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(body.invoice.genesis.privacy, /does not store raw thought data/);
+    const stored = db.prepare("SELECT payload_json FROM invoices WHERE id=?").get(body.id);
+    const storedInvoice = JSON.parse(stored.payload_json);
+    assert.deepEqual(storedInvoice.genesis, body.invoice.genesis);
     assert.equal(body.key.key_label, `A1:${sessionId}`);
   });
 
