@@ -806,6 +806,11 @@ anomaly if |zscore(entropy)| > 2.2`;
   </div>
   <div class="status" id="synStatus">Idle. Activity-based metering starts when the page sees active use and pauses on idle.</div>
   <div class="response" id="synGenesisState">Genesis action state will refresh after session activity.</div>
+  <div class="response" id="synGenesisTelemetrics">
+    <strong>Genesis telemetrics</strong>
+    <pre id="synGenesisSegments">Telemetrics will refresh after session activity.</pre>
+    <pre id="synGenesisRingPorts">Ring telemetry ports will refresh after session activity.</pre>
+  </div>
   <div class="r"><a href="/console" target="_blank" rel="noreferrer">Open console</a></div>
 </div>
 
@@ -922,7 +927,13 @@ anomaly if |zscore(entropy)| > 2.2`;
       'status=' + (($('synStatus')?.textContent || 'idle').trim())
     ];
   }
+  function formatGenesisValue(value){
+    if(value === undefined || value === null) return 'n/a';
+    if(typeof value === 'number') return Number.isFinite(value) ? value.toFixed(6).replace(/\.?0+$/, '') : String(value);
+    return String(value);
+  }
   function renderGenesisActionState({ monitoring=null, liveEntropy=null, status='refreshed' } = {}){
+    const latestMetrics = monitoring?.latest_metrics || {};
     const rings = monitoring?.rings || [];
     const synced = rings.filter(ring=>ring.status === 'telemetry_synced').length;
     const primaryRing = rings[0];
@@ -937,6 +948,50 @@ anomaly if |zscore(entropy)| > 2.2`;
       'entropy ' + entropyLabel,
       'anchor ' + String(buildAnchor).slice(0, 16)
     ].join(' · ');
+
+    const telemetrics = {
+      status,
+      latest_metrics:{
+        coherence:latestMetrics.coherence ?? null,
+        contingency:latestMetrics.contingency ?? null,
+        continuity:latestMetrics.continuity ?? null
+      },
+      stream_status:monitoring?.stream?.status ?? null,
+      live_entropy_index:liveEntropy?.live_entropy_index ?? null
+    };
+    const segments = monitoring?.segments ?? [];
+    const ringPorts = rings.map((ring, index)=>({
+      index,
+      id:ring.id ?? ring.ring_id ?? ring.name ?? null,
+      status:ring.status ?? null,
+      telemetry_events:ring.telemetry_events ?? [],
+      latest_telemetry_at:ring.latest_telemetry_at ?? null
+    }));
+    const telemetryPorts = monitoring?.telemetry_ports ?? [];
+
+    $('synGenesisSegments').textContent = [
+      'Core telemetrics',
+      JSON.stringify(telemetrics, null, 2),
+      '',
+      'Segments',
+      JSON.stringify(segments, null, 2)
+    ].join('\n');
+    $('synGenesisRingPorts').textContent = [
+      'Telemetry ports',
+      JSON.stringify(telemetryPorts, null, 2),
+      '',
+      'Ring telemetry',
+      JSON.stringify(ringPorts, null, 2)
+    ].join('\n');
+
+    $('synGenesisTelemetrics').setAttribute('aria-label', [
+      'Genesis telemetrics',
+      'coherence ' + formatGenesisValue(latestMetrics.coherence),
+      'contingency ' + formatGenesisValue(latestMetrics.contingency),
+      'continuity ' + formatGenesisValue(latestMetrics.continuity),
+      'stream ' + formatGenesisValue(monitoring?.stream?.status),
+      'live entropy ' + formatGenesisValue(liveEntropy?.live_entropy_index)
+    ].join('; '));
   }
   async function refreshGenesisActionState(){
     const sid = $('synSession').value.trim(); if(!sid) return;
