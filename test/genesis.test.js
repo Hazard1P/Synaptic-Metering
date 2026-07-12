@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { genesisEntropticSettings, genesisRingMonitoring, genesisStringIntelligence, generateGenesisInvoiceDraft, relativeDaySchedule } from "../src/lib/genesis.js";
+import { genesisEntropticSettings, genesisRingMonitoring, genesisRoadmap, genesisStringIntelligence, genesisTechnicalStructure, generateGenesisInvoiceDraft, relativeDaySchedule } from "../src/lib/genesis.js";
 
 function makeDb(){
   const telemetryRows = [];
@@ -33,7 +33,7 @@ describe("Genesis account sync", () => {
     const db = makeDb();
     db.addTelemetry({ id: "t_1", session_id: "sess_1", at: "2026-07-11 12:00:00", payload_json: JSON.stringify({ ring_id: "ring-1", genesis_string: "Alpha Ring" }) });
     const sync = genesisRingMonitoring({ db, accountId: "acct_1", sessionId: "sess_1", now: new Date("2026-07-11T12:00:00Z"), days: 2 });
-    assert.equal(sync.telemetry_ports.length, 3);
+    assert.equal(sync.telemetry_ports.length, 5);
     assert.equal(sync.rings[0].status, "telemetry_synced");
     assert.equal(sync.rings[0].string_intelligence.normalized, "Alpha Ring");
     assert.equal(sync.rings[0].string_intelligence.system, "NDSP Genesis v3.0 string intelligence");
@@ -55,11 +55,23 @@ describe("Genesis account sync", () => {
     assert.ok(intelligence.shannon_entropy_bits_per_symbol > 0);
   });
 
+  it("publishes the v3.0 technical structure and roadmap", () => {
+    const structure = genesisTechnicalStructure();
+    const roadmap = genesisRoadmap();
+    assert.equal(structure.schema, "synaptics.ndsp.genesis.technical-structure.v1");
+    assert.equal(structure.rings.length, 5);
+    assert.ok(structure.components.some(component => component.id === "technical-structure"));
+    assert.ok(structure.data_flows.some(flow => flow.id === "metering-to-invoice"));
+    assert.equal(structure.contracts.structure, "GET /genesis/structure");
+    assert.equal(roadmap.schema, "synaptics.ndsp.genesis.roadmap.v1");
+    assert.equal(roadmap.phases[0].phase, "v3.0-foundation");
+  });
+
   it("generates an invoice draft with ring monitoring attached to line items", () => {
     const db = makeDb();
     const draft = generateGenesisInvoiceDraft({ db, accountId: "acct_1", sessionId: "sess_1", now: new Date("2026-07-11T12:00:00Z") });
     assert.equal(draft.schema, "synaptics.genesis.invoice.draft.v1");
     assert.equal(draft.totals.total_cents, 15);
-    assert.equal(draft.lines[0].ring_monitoring.length, 3);
+    assert.equal(draft.lines[0].ring_monitoring.length, 5);
   });
 });

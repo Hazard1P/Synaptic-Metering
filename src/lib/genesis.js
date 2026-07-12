@@ -23,7 +23,32 @@ const ENTROPTIC_WINDOW_TICKS = 42;
 const GENESIS_RINGS = Object.freeze([
   { id: "ring-1", anchor_id: "dyson-sphere-ring-1", telemetry_port: "ndsp.telemetry.ring_1", role: "physical_map_database" },
   { id: "ring-2", anchor_id: "fabric-universe-ring-map", telemetry_port: "ndsp.telemetry.ring_2", role: "fabric_universe_ring_map" },
-  { id: "ring-3", anchor_id: "major-ursa", telemetry_port: "ndsp.telemetry.ring_3", role: "governance_daily_alignment" }
+  { id: "ring-3", anchor_id: "major-ursa", telemetry_port: "ndsp.telemetry.ring_3", role: "governance_daily_alignment" },
+  { id: "ring-4", anchor_id: "cassiopeia", telemetry_port: "ndsp.telemetry.ring_4", role: "constellation_reference_alignment" },
+  { id: "ring-5", anchor_id: "isolated-blackholes", telemetry_port: "ndsp.telemetry.ring_5", role: "non_extractive_mesh_boundary" }
+]);
+
+const GENESIS_COMPONENTS = Object.freeze([
+  { id: "metering-core", layer: "metering", status: "implemented", routes: ["POST /sessions", "POST /sessions/:id/heartbeat", "GET /sessions/:id/summary"], responsibility: "Records one billable intelligence second per live heartbeat and keeps recovery adjustments separate." },
+  { id: "ndsp-policy-state", layer: "compatibility", status: "implemented", routes: ["GET /ndsp/state"], responsibility: "Publishes the Genesis v3.0 policy, anchored relevancy context, entroptic settings, and UI-compatible state envelope." },
+  { id: "telemetry-ingest", layer: "telemetry", status: "implemented", routes: ["POST /ndsp/telemetry"], responsibility: "Stores consent- or scope-authorized NDSP telemetry events for ring synchronization without storing raw biometric or thought data." },
+  { id: "ring-monitoring", layer: "intelligence", status: "implemented", routes: ["GET /genesis/account-sync"], responsibility: "Projects telemetry into five Genesis rings with deterministic string intelligence digests and non-extractive anchor references." },
+  { id: "invoice-drafting", layer: "billing", status: "implemented", routes: ["POST /genesis/invoices/draft", "POST /invoices/from-session"], responsibility: "Attaches ring-monitoring evidence and anchored network keys to metered invoice drafts." },
+  { id: "technical-structure", layer: "planning", status: "implemented", routes: ["GET /genesis/structure"], responsibility: "Exposes the versioned NDSP Genesis v3.0 component map, data flows, contracts, and roadmap." }
+]);
+
+const GENESIS_DATA_FLOWS = Object.freeze([
+  { id: "browser-activity-to-heartbeat", source: "Genesis browser activity meter", target: "usage_events", cadence: "1 Hz while active", privacy: "activity seconds only; no literal thought capture" },
+  { id: "telemetry-to-ring-sync", source: "ndsp_telemetry.payload_json", target: "genesis rings", cadence: "event driven", privacy: "payloads are account-owned and consent/scope gated" },
+  { id: "anchor-to-relevancy", source: "anchored_assets + map_assets", target: "daily_unix_relevancy", cadence: "request time", privacy: "anchor references are considered, not extracted into customer records" },
+  { id: "metering-to-invoice", source: "sessions + usage_events + catalog_items", target: "invoice draft", cadence: "on demand", privacy: "invoice lines include seconds, quantities, and ring status summaries" }
+]);
+
+const GENESIS_ROADMAP = Object.freeze([
+  { phase: "v3.0-foundation", horizon: "current", status: "shipping", outcome: "Stable NDSP compatibility, 1 Hz seconds metering, anchored string intelligence, five-ring technical structure, and invoice drafting." },
+  { phase: "v3.1-observability", horizon: "next", status: "planned", outcome: "Add aggregate ring health dashboards, telemetry retention controls, and anomaly trend exports for operators." },
+  { phase: "v3.2-governance", horizon: "later", status: "planned", outcome: "Add signed policy snapshots, versioned consent attestations, and stronger per-anchor moderation workflows." },
+  { phase: "v3.3-federation", horizon: "future", status: "research", outcome: "Support multi-tenant anchor federation and external verifier proofs while preserving non-extractive anchor boundaries." }
 ]);
 
 function isoDay(date){
@@ -112,6 +137,40 @@ export function genesisStringIntelligence(value, { anchorId = DEFAULT_ANCHOR_ID,
     relevancy_day_index: relevancy?.day_index ?? null,
     digest: createHash("sha256").update(normalized).digest("hex"),
     monitoring_basis: "normalized_genesis_string_sha256_with_entroptic_relevancy"
+  };
+}
+
+export function genesisTechnicalStructure({ includeRoadmap = true } = {}){
+  return {
+    schema: "synaptics.ndsp.genesis.technical-structure.v1",
+    core_version: GENESIS_CORE_VERSION,
+    objective: "Build NDSP Genesis v3.0 as a non-extractive, anchored seconds-of-intelligence metering system.",
+    principles: [
+      "meter activity seconds rather than literal thoughts",
+      "bind usage to account-owned sessions and invoices",
+      "derive deterministic string intelligence digests without extracting anchor assets",
+      "gate telemetry by API scope or account consent",
+      "keep roadmap phases explicit and versioned"
+    ],
+    rings: GENESIS_RINGS.map((ring, index) => ({ ...ring, ordinal: index + 1 })),
+    components: GENESIS_COMPONENTS,
+    data_flows: GENESIS_DATA_FLOWS,
+    contracts: {
+      policy_state: "GET /ndsp/state",
+      telemetry_ingest: "POST /ndsp/telemetry",
+      account_sync: "GET /genesis/account-sync",
+      invoice_draft: "POST /genesis/invoices/draft",
+      structure: "GET /genesis/structure"
+    },
+    roadmap: includeRoadmap ? GENESIS_ROADMAP : []
+  };
+}
+
+export function genesisRoadmap(){
+  return {
+    schema: "synaptics.ndsp.genesis.roadmap.v1",
+    core_version: GENESIS_CORE_VERSION,
+    phases: GENESIS_ROADMAP
   };
 }
 
