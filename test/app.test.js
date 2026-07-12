@@ -194,6 +194,28 @@ describe("anchored intelligence defaults", () => {
   });
 });
 
+describe("Google OAuth start", () => {
+  it("returns a user-safe configuration message when Google client ID is missing", async () => {
+    const originalClientId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+
+    try{
+      const res = await request("/auth/google/start", { redirect: "manual" });
+      assert.equal(res.status, 503);
+      const body = await json(res);
+      assert.equal(body.error, "google_oauth_not_configured");
+      assert.equal(body.message, "Google sign-in is not configured for this deployment. Please contact the site administrator.");
+      assert(!String(body.message).includes("GOOGLE_CLIENT_ID"));
+    }finally{
+      if(originalClientId === undefined){
+        delete process.env.GOOGLE_CLIENT_ID;
+      }else{
+        process.env.GOOGLE_CLIENT_ID = originalClientId;
+      }
+    }
+  });
+});
+
 describe("validateStartupConfig", () => {
   it("allows non-production configuration without production-only secrets", () => {
     assert.deepEqual(validateStartupConfig({ NODE_ENV: "test" }), { ok: true, issues: [] });
@@ -322,67 +344,59 @@ describe("invoice generation and import", () => {
     assert.equal(body.invoice.session_id, sessionId);
     assert.equal(body.invoice.account_id, "acct_user");
     assert.equal(body.invoice.totals.total_cents, 24);
+    assert.equal(body.invoice.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(body.invoice.genesis.account_id, "acct_user");
+    assert.equal(body.invoice.genesis.session_id, sessionId);
+    assert.equal(body.invoice.genesis.rings.length, 5);
+    assert.equal(body.invoice.genesis.anchor_ids.includes("dyson-sphere-ring-1"), true);
+    assert.equal(typeof body.invoice.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(body.invoice.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(body.invoice.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(body.invoice.genesis.privacy, /does not store raw thought data/);
+    const stored = db.prepare("SELECT payload_json FROM invoices WHERE id=?").get(body.id);
+    const storedInvoice = JSON.parse(stored.payload_json);
+    assert.deepEqual(storedInvoice.genesis, body.invoice.genesis);
     assert.equal(body.key.key_label, `A1:${sessionId}`);
   });
 
-  it("exposes only the authenticated account's intelligence strings and invoice datablocks", async () => {
-    const userCookie = authCookie("acct_user");
+  it("persists map session keys for invoice history and keeps them unique per invoice", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 5 });
+    const cookie = authCookie("acct_user");
+
+    const first = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie }, body: JSON.stringify({ session_id: sessionId }) }));
+    const second = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie }, body: JSON.stringify({ session_id: sessionId }) }));
+
+    assert.match(first.invoice.map_session_key.session_key_digest, /^[a-f0-9]{64}$/);
+    assert.equal(first.invoice.map_session_key.invoice_id, first.id);
+    assert.equal(first.invoice.map_session_key.session_id, sessionId);
+    assert.equal(first.invoice.map_session_key.anchor_asset_id, "dyson-sphere-ring-1");
+    assert.equal(first.invoice.map_session_key.retrieval_route, `/invoices/${first.id}/map-session-key`);
+    assert.notEqual(first.invoice.map_session_key.session_key_digest, second.invoice.map_session_key.session_key_digest);
+
+    const keyRes = await request(first.invoice.map_session_key.retrieval_route, { headers: { cookie } });
+    assert.equal(keyRes.status, 200);
+    const keyBody = await json(keyRes);
+    assert.equal(keyBody.map_session_key.session_key_digest, first.invoice.map_session_key.session_key_digest);
+
+    const historyRes = await request(`/sessions/${sessionId}/map-history`, { headers: { cookie } });
+    assert.equal(historyRes.status, 200);
+    const history = await json(historyRes);
+    assert.equal(history.session_id, sessionId);
+    assert.equal(history.map_session_keys.length, 2);
+    assert.deepEqual(
+      new Set(history.map_session_keys.map(key => key.invoice_id)),
+      new Set([first.id, second.id])
+    );
+  });
+
+  it("gates map session key retrieval by account ownership", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 1 });
+    const ownerCookie = authCookie("acct_user");
     const otherCookie = authCookie("acct_other");
+    const created = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie: ownerCookie }, body: JSON.stringify({ session_id: sessionId }) }));
 
-    const userSessionRes = await request("/sessions", {
-      method: "POST",
-      headers: { cookie: userCookie },
-      body: JSON.stringify({ seat_id: "seat-intelligence-user" })
-    });
-    assert.equal(userSessionRes.status, 201);
-    const userSession = await json(userSessionRes);
-    assert.match(userSession.account_intelligence.id, /^ais_/);
-
-    assert.equal((await request(`/sessions/${userSession.id}/start`, {
-      method: "POST",
-      headers: { cookie: userCookie },
-      body: JSON.stringify({ item_id: "item_seconds" })
-    })).status, 200);
-    assert.equal((await request(`/sessions/${userSession.id}/heartbeat`, {
-      method: "POST",
-      headers: { cookie: userCookie },
-      body: JSON.stringify({ seconds: 1 })
-    })).status, 200);
-
-    const invoiceRes = await request("/invoices/from-session", {
-      method: "POST",
-      headers: { cookie: userCookie },
-      body: JSON.stringify({ session_id: userSession.id })
-    });
-    assert.equal(invoiceRes.status, 201);
-    const invoiceBody = await json(invoiceRes);
-    assert.match(invoiceBody.invoice.account_intelligence.id, /^ais_/);
-    assert.equal(invoiceBody.invoice.account_intelligence.session_id, userSession.id);
-    assert.equal(invoiceBody.invoice.account_intelligence.datablock_reference.encrypted, true);
-
-    const otherSessionRes = await request("/sessions", {
-      method: "POST",
-      headers: { cookie: otherCookie },
-      body: JSON.stringify({ seat_id: "seat-intelligence-other" })
-    });
-    assert.equal(otherSessionRes.status, 201);
-
-    const userStringsRes = await request("/account/intelligence-strings", { headers: { cookie: userCookie } });
-    assert.equal(userStringsRes.status, 200);
-    const userStrings = await json(userStringsRes);
-    assert(userStrings.intelligence_strings.length >= 2);
-    assert(userStrings.intelligence_strings.every(row => row.account_id === "acct_user"));
-    assert(userStrings.intelligence_strings.some(row => row.invoice_id === invoiceBody.id));
-
-    const datablockRes = await request(`/invoices/${invoiceBody.id}/datablock`, { headers: { cookie: userCookie } });
-    assert.equal(datablockRes.status, 200);
-    const datablockBody = await json(datablockRes);
-    assert.equal(datablockBody.datablock.account_id, "acct_user");
-    assert.equal(datablockBody.datablock.invoice_id, invoiceBody.id);
-    assert.equal(datablockBody.account_intelligence.id, invoiceBody.invoice.account_intelligence.id);
-
-    const forbiddenDatablockRes = await request(`/invoices/${invoiceBody.id}/datablock`, { headers: { cookie: otherCookie } });
-    assert.equal(forbiddenDatablockRes.status, 404);
+    assert.equal((await request(`/invoices/${created.id}/map-session-key`, { headers: { cookie: otherCookie } })).status, 404);
+    assert.equal((await request(`/sessions/${sessionId}/map-history`, { headers: { cookie: otherCookie } })).status, 403);
   });
 
   it("imports accepted, pending, and rejected invoices according to verification", async () => {
@@ -412,5 +426,67 @@ describe("admin authorization", () => {
 
     const apiKeyRes = await request("/admin/intelligence/master-keys", { method: "POST", headers: { "x-api-key": apiKey }, body: JSON.stringify({ key_label: "MK:api-key-allowed" }) });
     assert.equal(apiKeyRes.status, 201);
+  });
+});
+
+describe("NDSP intelligence streams", () => {
+  function grantTelemetry(accountId){
+    db.prepare(`
+      INSERT INTO consents (id, account_id, consent_type, version, granted_at, source, created_at, updated_at)
+      VALUES (?, ?, 'telemetry', 'test', datetime('now'), 'test', datetime('now'), datetime('now'))
+    `).run(`consent_${accountId}_${Date.now()}_${Math.random().toString(16).slice(2)}`, accountId);
+  }
+
+  it("persists stream lifecycle state from account sync", async () => {
+    const sessionId = seedSession({ id: "sess_stream_persist", accountId: "acct_user", live: 4 });
+    const cookie = authCookie("acct_user");
+    const res = await request(`/genesis/account-sync?session_id=${encodeURIComponent(sessionId)}`, { headers: { cookie } });
+    assert.equal(res.status, 200);
+    const body = await json(res);
+    assert.equal(body.stream.account_id, "acct_user");
+    assert.equal(body.stream.session_id, sessionId);
+    assert.equal(body.stream.status, "active");
+    assert.ok(body.stream.events.some(event => event.event_type === "stream_created"));
+
+    const row = db.prepare("SELECT * FROM ndsp_intelligence_streams WHERE account_id=? AND session_id=?").get("acct_user", sessionId);
+    assert.equal(row.id, body.stream.id);
+  });
+
+  it("rejects cross-account telemetry session misuse", async () => {
+    grantTelemetry("acct_user");
+    const sessionId = seedSession({ id: "sess_stream_other", accountId: "acct_other", live: 1 });
+    const res = await request("/ndsp/telemetry", {
+      method: "POST",
+      headers: { cookie: authCookie("acct_user") },
+      body: JSON.stringify({ session_id: sessionId, ring_id: "ring-1", genesis_string: "wrong account" })
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await json(res)).error, "session_account_forbidden");
+  });
+
+  it("links telemetry to the active stream and then binds generated invoices", async () => {
+    grantTelemetry("acct_user");
+    const sessionId = seedSession({ id: "sess_stream_invoice", accountId: "acct_user", live: 6 });
+    const cookie = authCookie("acct_user");
+
+    const telemetryRes = await request("/ndsp/telemetry", {
+      method: "POST",
+      headers: { cookie },
+      body: JSON.stringify({ session_id: sessionId, ring_id: "ring-1", genesis_string: "invoice-linked telemetry", coherence: 92 })
+    });
+    assert.equal(telemetryRes.status, 200);
+    const telemetry = await json(telemetryRes);
+    assert.equal(telemetry.stream.status, "monitoring");
+    assert.ok(telemetry.stream.events.some(event => event.event_type === "telemetry_ingested" && event.telemetry_id === telemetry.id));
+
+    const invoiceRes = await request("/invoices/from-session", {
+      method: "POST",
+      headers: { cookie },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    assert.equal(invoiceRes.status, 201);
+    const invoice = await json(invoiceRes);
+    assert.equal(invoice.stream.status, "invoice_bound");
+    assert.ok(invoice.stream.events.some(event => event.event_type === "invoice_bound" && event.invoice_id === invoice.id));
   });
 });
