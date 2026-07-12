@@ -346,6 +346,7 @@
     <div id="inputs"></div>
     <div style="height:10px"></div>
     <div class="muted mono" id="backendUI"></div>
+    <div class="muted mono" id="backendStatusUI"></div>
     <div class="muted mono" id="keyOriginUI"></div>
   </section>
 
@@ -445,6 +446,9 @@
   $("coreVersionBadge").textContent = CORE_VERSION;
   $("buildBadge").textContent = BUILD_ID;
   $("backendUI").textContent = NDSP_BACKEND ? `BACKEND: ${NDSP_BACKEND}` : "BACKEND: OFFLINE (LOCAL MODE)";
+  $("backendStatusUI").textContent = NDSP_BACKEND
+    ? "Telemetry backend requires sign-in and telemetry consent."
+    : "Telemetry backend offline; computing locally.";
   $("keyOriginUI").textContent = KEY_ORIGIN;
 
   $("weightsUI").textContent =
@@ -472,6 +476,9 @@ anomaly if |zscore(entropy)| > 2.2`;
     history:[]
   };
   let policy=null;
+  let backendStatusMessage = NDSP_BACKEND
+    ? "Telemetry backend requires sign-in and telemetry consent."
+    : "Telemetry backend offline; computing locally.";
 
   const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 
@@ -528,6 +535,32 @@ anomaly if |zscore(entropy)| > 2.2`;
     return out;
   }
 
+  function setBackendStatus(message){
+    backendStatusMessage = message;
+    const backendStatusUI = $("backendStatusUI");
+    if(backendStatusUI) backendStatusUI.textContent = message;
+  }
+
+  function getTelemetryStatus(responseBody, status){
+    if(responseBody && typeof responseBody === "object"){
+      const candidate = responseBody.code || responseBody.reason || responseBody.status || responseBody.error || responseBody.message || responseBody.detail;
+      if(candidate && typeof candidate === "object"){
+        return candidate.code || candidate.reason || candidate.status || candidate.error || candidate.message || "rejected";
+      }
+      return candidate;
+    }
+    return status ? `http_${status}` : "rejected";
+  }
+
+  async function parseResponseBody(response){
+    const contentType = response.headers.get("content-type") || "";
+    if(contentType.includes("application/json")){
+      return await response.json().catch(()=>null);
+    }
+    const text = await response.text().catch(()=>"");
+    return text ? { message:text.slice(0,80) } : null;
+  }
+
   function computeDerived(ch){
     const e = clamp(
       WEIGHTS.c_load*ch.c_load +
@@ -556,10 +589,18 @@ anomaly if |zscore(entropy)| > 2.2`;
       const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
         method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(inputs)
       });
-      if(!r.ok) return null;
-      const j=await r.json();
-      return j.state||null;
-    }catch{ return null; }
+      const body = await parseResponseBody(r);
+      if(!r.ok){
+        const status = getTelemetryStatus(body, r.status);
+        setBackendStatus(`Telemetry skipped: ${status}. Backend telemetry requires sign-in and telemetry consent; continuing local computation.`);
+        return null;
+      }
+      setBackendStatus("Telemetry accepted by backend; local computation remains active.");
+      return body?.state||null;
+    }catch{
+      setBackendStatus("Telemetry skipped: backend_unreachable. Backend telemetry requires sign-in and telemetry consent; continuing local computation.");
+      return null;
+    }
   }
 
   async function pullState(){
@@ -684,6 +725,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   function renderAll(){
     renderInputs(); renderChannels(); renderDerived();
     renderBadges(); renderCodex(); renderChart();
+    setBackendStatus(backendStatusMessage);
   }
 
   // Tick loop
