@@ -19,13 +19,14 @@ services:
       - TRUST_PROXY=${TRUST_PROXY:-true}
       - INVOICE_TEMPLATE_PATH=/app/templates/Invoice.html
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public https:// origin}
-      # Production database-at-rest attestation. Set these before `docker compose up -d`;
-      # they document the managed encrypted storage protecting DATABASE_PATH, SQLite
-      # WAL/SHM sidecars, snapshots, and backups.
-      - "DB_AT_REST_ENCRYPTION=${DB_AT_REST_ENCRYPTION:-managed-encrypted-storage}"
-      - "STORAGE_ENCRYPTION_AT_REST=${STORAGE_ENCRYPTION_AT_REST:-true}"
-      - "STORAGE_ENCRYPTION_PROVIDER=${STORAGE_ENCRYPTION_PROVIDER:-Synaptic Systems production Docker host encrypted persistent volume: LUKS2/dm-crypt data volume with encrypted Restic backup repository for /app/data/app.db, SQLite WAL/SHM sidecars, snapshots, and backups}"
-      - "STORAGE_ENCRYPTION_EVIDENCE=${STORAGE_ENCRYPTION_EVIDENCE:-runbook:README.md#sqlite-at-rest-encryption-policy-and-operator-checklist}"
+      # Production database-at-rest attestation for the API process that runs src/db/db.js.
+      # This deployment stores DATABASE_PATH on the managed encrypted Docker host
+      # data volume below; the same control covers SQLite WAL/SHM sidecars,
+      # snapshots, and backups.
+      - DB_AT_REST_ENCRYPTION=managed-encrypted-storage
+      - STORAGE_ENCRYPTION_AT_REST=true
+      - STORAGE_ENCRYPTION_PROVIDER=Synaptic Systems production Docker host encrypted persistent volume control: LUKS2/dm-crypt encrypted /app/data volume for /app/data/app.db, /app/data/app.db-wal, /app/data/app.db-shm, and encrypted Restic snapshot/backup repository
+      - STORAGE_ENCRYPTION_EVIDENCE=runbook:README.md#sqlite-at-rest-encryption-policy-and-operator-checklist
     volumes:
       - ./data:/app/data
       - ./templates:/app/templates:ro
