@@ -242,7 +242,7 @@
 
 <style>
 #syn-bridge{position:fixed;right:16px;bottom:16px;z-index:50;width:min(420px,calc(100vw - 32px));background:rgba(8,12,30,.94);border:1px solid rgba(18,240,255,.25);box-shadow:0 18px 60px rgba(0,0,0,.55);border-radius:18px;padding:14px;backdrop-filter:blur(10px);font:12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#f5f7ff}
-#syn-bridge h3{margin:0 0 10px;font-size:14px}#syn-bridge .r{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}#syn-bridge input,#syn-bridge select,#syn-bridge button{border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:#fff;padding:8px 10px;font-size:12px}#syn-bridge input,#syn-bridge select{flex:1;min-width:120px}#syn-bridge button{cursor:pointer}#syn-bridge .primary{background:linear-gradient(90deg, rgba(18,240,255,.20), rgba(124,60,255,.22), rgba(60,229,124,.18));}#syn-bridge .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}#syn-bridge .k{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px}#syn-bridge .kv{font-size:18px;font-weight:700}#syn-bridge .kl{color:#a1a7c4}#syn-bridge .status{color:#a1a7c4;min-height:18px}#syn-bridge a{color:#12f0ff;text-decoration:none}
+#syn-bridge h3{margin:0 0 10px;font-size:14px}#syn-bridge .r{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}#syn-bridge input,#syn-bridge select,#syn-bridge button{border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.28);color:#fff;padding:8px 10px;font-size:12px}#syn-bridge input,#syn-bridge select{flex:1;min-width:120px}#syn-bridge button{cursor:pointer}#syn-bridge .primary{background:linear-gradient(90deg, rgba(18,240,255,.20), rgba(124,60,255,.22), rgba(60,229,124,.18));}#syn-bridge .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}#syn-bridge .k{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px}#syn-bridge .kv{font-size:18px;font-weight:700}#syn-bridge .kl{color:#a1a7c4}#syn-bridge .status{color:#a1a7c4;min-height:18px}#syn-bridge .response{background:rgba(18,240,255,.06);border:1px solid rgba(18,240,255,.16);border-radius:12px;color:#c7def7;margin:8px 0 4px;padding:8px;min-height:36px}#syn-bridge .response strong{color:#f5f7ff}#syn-bridge a{color:#12f0ff;text-decoration:none}
 </style>
 </head>
 <body>
@@ -736,6 +736,7 @@ anomaly if |zscore(entropy)| > 2.2`;
     <div class="k"><div class="kv" id="synTotal">$0.00</div><div class="kl">Total</div></div>
   </div>
   <div class="status" id="synStatus">Idle. Activity-based metering starts when the page sees active use and pauses on idle.</div>
+  <div class="response" id="synGenesisState">Genesis action state will refresh after session activity.</div>
   <div class="r"><a href="/console" target="_blank" rel="noreferrer">Open console</a></div>
 </div>
 
@@ -818,17 +819,19 @@ anomaly if |zscore(entropy)| > 2.2`;
     await api('/sessions/' + encodeURIComponent(sid) + '/close', { method:'POST', body:JSON.stringify({}) });
     currentRunning=false; setStatus('Session closed.');
     await pullSummary();
+    await refreshGenesisActionState();
   }
   async function tick(){
     try{
       const focused = !document.hidden && document.hasFocus();
       const active = focused && (Date.now() - lastActivity <= IDLE_MS);
-      if(active && !currentRunning){ await startItem(); setStatus('Active use detected. Meter running on ' + itemLabel); }
+      if(active && !currentRunning){ await startItem(); await refreshGenesisActionState(); setStatus('Active use detected. Meter running on ' + itemLabel); }
       if(!active && currentRunning){ await stopItem(); setStatus('Idle detected. Meter paused.'); }
       if(active){
         const sid = $('synSession').value.trim();
         await api('/sessions/' + encodeURIComponent(sid) + '/heartbeat', { method:'POST', body:JSON.stringify({ seconds:1 }) });
         await pullSummary();
+        await refreshGenesisActionState();
       }
     }catch(e){ setStatus('Error: ' + e.message); }
   }
@@ -839,6 +842,53 @@ anomaly if |zscore(entropy)| > 2.2`;
     $('synQty').textContent = String(s.metrics?.tracked_quantity || 0);
     $('synTotal').textContent = '$' + Number(s.total?.amount || 0).toFixed(2);
   }
+  function currentGenesisStrings(){
+    return [
+      'session=' + ($('synSession').value.trim() || 'pending'),
+      'item=' + (itemLabel || $('synItem').options[$('synItem').selectedIndex]?.textContent || 'unselected'),
+      'seconds=' + $('synSeconds').textContent,
+      'quantity=' + $('synQty').textContent,
+      'total=' + $('synTotal').textContent,
+      'entropy=' + (($('entropyIndex')?.textContent || '0').trim()),
+      'status=' + (($('synStatus')?.textContent || 'idle').trim())
+    ];
+  }
+  function renderGenesisActionState({ monitoring=null, liveEntropy=null, status='refreshed' } = {}){
+    const rings = monitoring?.rings || [];
+    const synced = rings.filter(ring=>ring.status === 'telemetry_synced').length;
+    const primaryRing = rings[0];
+    const entropy = liveEntropy?.live_entropy_index ?? primaryRing?.string_intelligence?.entropy_ratio;
+    const entropyLabel = typeof entropy === 'number'
+      ? (entropy > 1 ? entropy.toFixed(3) : (entropy * 100).toFixed(3))
+      : 'n/a';
+    const buildAnchor = liveEntropy?.build_anchor?.id || primaryRing?.intelligence?.deterministic_tick_id || monitoring?.anchor_id || 'n/a';
+    $('synGenesisState').textContent = [
+      'Genesis action state: ' + status,
+      'rings ' + synced + '/' + rings.length + (primaryRing ? ' (' + primaryRing.status + ')' : ''),
+      'entropy ' + entropyLabel,
+      'anchor ' + String(buildAnchor).slice(0, 16)
+    ].join(' · ');
+  }
+  async function refreshGenesisActionState(){
+    const sid = $('synSession').value.trim(); if(!sid) return;
+    const monitoring = await api('/genesis/account-sync?session_id=' + encodeURIComponent(sid), { method:'GET' });
+    let liveEntropy = null;
+    try{
+      const entropyResponse = await api('/intelligence/live-entropy', {
+        method:'POST',
+        body:JSON.stringify({
+          session_id:sid,
+          strings_of_intelligence:currentGenesisStrings(),
+          anchor_id:'live-entropy-index'
+        })
+      });
+      liveEntropy = entropyResponse.live_entropy || null;
+    }catch(e){
+      renderGenesisActionState({ monitoring, status:'ring sync refreshed; live entropy unavailable (' + e.message + ')' });
+      return;
+    }
+    renderGenesisActionState({ monitoring, liveEntropy, status:'refreshed' });
+  }
   function noteActivity(){ lastActivity = Date.now(); }
   ['mousemove','mousedown','keydown','scroll','touchstart','pointerdown'].forEach(ev=>window.addEventListener(ev, noteActivity, { passive:true }));
   window.addEventListener('focus', noteActivity);
@@ -846,8 +896,8 @@ anomaly if |zscore(entropy)| > 2.2`;
 
   $('synRefreshAccount').addEventListener('click', async ()=>{ try{ const account = await refreshAccount(); if(account) await refreshCatalog(); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synLogout').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await fetch(apiBase + '/auth/logout', { method:'POST', credentials:'include' }); currentRunning=false; setAccountControls(null); setStatus('Logged out. Sign in to start browser metering.'); }catch(e){ setStatus('Error: ' + e.message); } });
-  $('synStart').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); await startItem(); await pullSummary(); if(!loop) loop=setInterval(tick,1000); noteActivity(); setStatus('Thinking meter armed. Move, type, or interact to accumulate seconds.'); }catch(e){ setStatus('Error: ' + e.message); } });
-  $('synStop').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await stopItem(); setStatus('Meter stopped manually.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synStart').addEventListener('click', async ()=>{ try{ saveCfg(); await refreshCatalog(); await startItem(); await pullSummary(); await refreshGenesisActionState(); if(!loop) loop=setInterval(tick,1000); noteActivity(); setStatus('Thinking meter armed. Move, type, or interact to accumulate seconds.'); }catch(e){ setStatus('Error: ' + e.message); } });
+  $('synStop').addEventListener('click', async ()=>{ try{ if(loop){ clearInterval(loop); loop=null; } await stopItem(); await refreshGenesisActionState(); setStatus('Meter stopped manually.'); }catch(e){ setStatus('Error: ' + e.message); } });
   $('synClose').addEventListener('click', ()=> closeSession().catch(e=>setStatus('Error: '+e.message)));
   $('synItem').addEventListener('change', ()=>{ itemLabel = $('synItem').options[$('synItem').selectedIndex]?.textContent || ''; saveCfg(); });
   $('synSession').addEventListener('change', saveCfg);
