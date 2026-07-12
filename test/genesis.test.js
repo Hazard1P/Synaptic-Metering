@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { genesisRingMonitoring, generateGenesisInvoiceDraft, relativeDaySchedule } from "../src/lib/genesis.js";
+import { genesisEntropticSettings, genesisRingMonitoring, genesisStringIntelligence, generateGenesisInvoiceDraft, relativeDaySchedule } from "../src/lib/genesis.js";
 
 function makeDb(){
   const telemetryRows = [];
@@ -36,7 +36,23 @@ describe("Genesis account sync", () => {
     assert.equal(sync.telemetry_ports.length, 3);
     assert.equal(sync.rings[0].status, "telemetry_synced");
     assert.equal(sync.rings[0].string_intelligence.normalized, "Alpha Ring");
+    assert.equal(sync.rings[0].string_intelligence.system, "NDSP Genesis v3.0 string intelligence");
+    assert.equal(sync.rings[0].entroptic_settings.window_ticks, 42);
+    assert.equal(sync.entroptic_settings.mode, "anchored_relevancy_refinement");
     assert.equal(sync.day_schedule[1].service_day, "2026-07-12");
+  });
+
+  it("scores string intelligence against anchored relevancy without extracting anchors", () => {
+    const relevancy = { day_index: 20645, seconds_into_day: 43200, seconds_remaining: 43199, discrepancy_basis: "unix_daily_24_hour_alignment" };
+    const settings = genesisEntropticSettings({ relevancy });
+    const intelligence = genesisStringIntelligence("  Alpha   Ring  ", { anchorId: "dyson-sphere-ring-1", relevancy });
+    assert.equal(settings.schema, "synaptics.ndsp.genesis.entroptic-settings.v1");
+    assert.equal(settings.weights.c_load, 0.26);
+    assert.equal(settings.relevancy_anchor.day_index, 20645);
+    assert.equal(intelligence.normalized, "Alpha   Ring");
+    assert.equal(intelligence.anchor_id, "dyson-sphere-ring-1");
+    assert.equal(intelligence.relevancy_day_index, 20645);
+    assert.ok(intelligence.shannon_entropy_bits_per_symbol > 0);
   });
 
   it("generates an invoice draft with ring monitoring attached to line items", () => {

@@ -181,7 +181,7 @@ The service treats Major Ursa, Cassiopeia, and isolated blackholes as permanent 
 - `GET /sessions/:id/summary` — seconds + cost by item
 
 ### NDSP Genesis Core compatibility
-- `GET /ndsp/state`
+- `GET /ndsp/state` — returns Genesis v3.0 policy, anchored daily Unix relevancy, entroptic channel settings, and the string intelligence system descriptor.
 - `POST /ndsp/telemetry`
 
 ---
@@ -526,7 +526,8 @@ This build adds `/genesis`, which serves the uploaded **NDPS Genesis Core** page
 ### Routes
 - `/genesis` — integrated Genesis page with live activity meter
 - `/console` — console with seconds, quantity, total, and launch link to Genesis
-- `/ndsp/state?session_id=sess_...` — returns NDSP policy/state plus optional meter summary
+- `/ndsp/state?session_id=sess_...` — returns NDSP policy/state plus optional meter summary, anchored relevancy, entroptic channel caps/weights, and the NDSP Genesis v3.0 string intelligence descriptor
+- `/genesis/account-sync?session_id=sess_...` — returns ring telemetry monitoring with anchored string intelligence digests and entroptic refinement settings
 
 ### Notes
 - Enter your API key in the Genesis overlay once per tab/session. It is stored only in sessionStorage and is cleared when the browser session ends.
