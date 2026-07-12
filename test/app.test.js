@@ -194,6 +194,28 @@ describe("anchored intelligence defaults", () => {
   });
 });
 
+describe("Google OAuth start", () => {
+  it("returns a user-safe configuration message when Google client ID is missing", async () => {
+    const originalClientId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+
+    try{
+      const res = await request("/auth/google/start", { redirect: "manual" });
+      assert.equal(res.status, 503);
+      const body = await json(res);
+      assert.equal(body.error, "google_oauth_not_configured");
+      assert.equal(body.message, "Google sign-in is not configured for this deployment. Please contact the site administrator.");
+      assert(!String(body.message).includes("GOOGLE_CLIENT_ID"));
+    }finally{
+      if(originalClientId === undefined){
+        delete process.env.GOOGLE_CLIENT_ID;
+      }else{
+        process.env.GOOGLE_CLIENT_ID = originalClientId;
+      }
+    }
+  });
+});
+
 describe("validateStartupConfig", () => {
   it("allows non-production configuration without production-only secrets", () => {
     assert.deepEqual(validateStartupConfig({ NODE_ENV: "test" }), { ok: true, issues: [] });
@@ -322,7 +344,59 @@ describe("invoice generation and import", () => {
     assert.equal(body.invoice.session_id, sessionId);
     assert.equal(body.invoice.account_id, "acct_user");
     assert.equal(body.invoice.totals.total_cents, 24);
+    assert.equal(body.invoice.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(body.invoice.genesis.account_id, "acct_user");
+    assert.equal(body.invoice.genesis.session_id, sessionId);
+    assert.equal(body.invoice.genesis.rings.length, 5);
+    assert.equal(body.invoice.genesis.anchor_ids.includes("dyson-sphere-ring-1"), true);
+    assert.equal(typeof body.invoice.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(body.invoice.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(body.invoice.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(body.invoice.genesis.privacy, /does not store raw thought data/);
+    const stored = db.prepare("SELECT payload_json FROM invoices WHERE id=?").get(body.id);
+    const storedInvoice = JSON.parse(stored.payload_json);
+    assert.deepEqual(storedInvoice.genesis, body.invoice.genesis);
     assert.equal(body.key.key_label, `A1:${sessionId}`);
+  });
+
+  it("persists map session keys for invoice history and keeps them unique per invoice", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 5 });
+    const cookie = authCookie("acct_user");
+
+    const first = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie }, body: JSON.stringify({ session_id: sessionId }) }));
+    const second = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie }, body: JSON.stringify({ session_id: sessionId }) }));
+
+    assert.match(first.invoice.map_session_key.session_key_digest, /^[a-f0-9]{64}$/);
+    assert.equal(first.invoice.map_session_key.invoice_id, first.id);
+    assert.equal(first.invoice.map_session_key.session_id, sessionId);
+    assert.equal(first.invoice.map_session_key.anchor_asset_id, "dyson-sphere-ring-1");
+    assert.equal(first.invoice.map_session_key.retrieval_route, `/invoices/${first.id}/map-session-key`);
+    assert.notEqual(first.invoice.map_session_key.session_key_digest, second.invoice.map_session_key.session_key_digest);
+
+    const keyRes = await request(first.invoice.map_session_key.retrieval_route, { headers: { cookie } });
+    assert.equal(keyRes.status, 200);
+    const keyBody = await json(keyRes);
+    assert.equal(keyBody.map_session_key.session_key_digest, first.invoice.map_session_key.session_key_digest);
+
+    const historyRes = await request(`/sessions/${sessionId}/map-history`, { headers: { cookie } });
+    assert.equal(historyRes.status, 200);
+    const history = await json(historyRes);
+    assert.equal(history.session_id, sessionId);
+    assert.equal(history.map_session_keys.length, 2);
+    assert.deepEqual(
+      new Set(history.map_session_keys.map(key => key.invoice_id)),
+      new Set([first.id, second.id])
+    );
+  });
+
+  it("gates map session key retrieval by account ownership", async () => {
+    const sessionId = seedSession({ accountId: "acct_user", live: 1 });
+    const ownerCookie = authCookie("acct_user");
+    const otherCookie = authCookie("acct_other");
+    const created = await json(await request("/invoices/from-session", { method: "POST", headers: { cookie: ownerCookie }, body: JSON.stringify({ session_id: sessionId }) }));
+
+    assert.equal((await request(`/invoices/${created.id}/map-session-key`, { headers: { cookie: otherCookie } })).status, 404);
+    assert.equal((await request(`/sessions/${sessionId}/map-history`, { headers: { cookie: otherCookie } })).status, 403);
   });
 
   it("imports accepted, pending, and rejected invoices according to verification", async () => {

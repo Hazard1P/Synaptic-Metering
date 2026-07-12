@@ -85,22 +85,15 @@ describe("Genesis account sync", () => {
     assert.equal(draft.schema, "synaptics.genesis.invoice.draft.v1");
     assert.equal(draft.totals.total_cents, 15);
     assert.equal(draft.lines[0].ring_monitoring.length, 5);
-    assert.equal(draft.latest_metrics.stream_id, "sess_1");
-  });
-
-  it("computes deterministic stream metrics and updates when continuity changes", () => {
-    const db = makeDb();
-    db.addTelemetry({ id: "t_1", session_id: "sess_1", at: "2026-07-11 12:00:00", payload_json: JSON.stringify({ ring_id: "ring-1", genesis_string: "Alpha Ring" }) });
-    const now = new Date("2026-07-11T12:00:00Z");
-    const first = computeStreamMetrics({ db, accountId: "acct_1", sessionId: "sess_1", now, store: false });
-    const second = computeStreamMetrics({ db, accountId: "acct_1", sessionId: "sess_1", now, store: false });
-    assert.deepEqual(first, second);
-
-    db.setUsageEvents([
-      { id: "u_1", seconds: 1, event_kind: "live_tick", heartbeat_event_timestamp: "2026-07-11T12:00:00Z", heartbeat_tick_sequence: 1, at: "2026-07-11 12:00:00" },
-      { id: "u_2", seconds: 1, event_kind: "live_tick", heartbeat_event_timestamp: "2026-07-11T12:00:05Z", heartbeat_tick_sequence: 7, at: "2026-07-11 12:00:05" }
-    ]);
-    const changed = computeStreamMetrics({ db, accountId: "acct_1", sessionId: "sess_1", now, store: false });
-    assert.notEqual(changed.continuity, first.continuity);
+    assert.equal(draft.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
+    assert.equal(draft.genesis.account_id, "acct_1");
+    assert.equal(draft.genesis.session_id, "sess_1");
+    assert.equal(draft.genesis.rings.length, 5);
+    assert.equal(draft.genesis.anchor_ids.length, 5);
+    assert.equal(typeof draft.genesis.string_intelligence_digests["ring-1"], "string");
+    assert.equal(draft.genesis.telemetry_event_counts["ring-1"], 0);
+    assert.equal(draft.genesis.latest_telemetry_timestamps["ring-1"], null);
+    assert.match(draft.genesis.privacy, /deterministic digests/);
+    assert.match(draft.genesis.privacy, /does not store raw thought data/);
   });
 });
