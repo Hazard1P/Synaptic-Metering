@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
-import { centsToMoney, computeSessionSummary } from "./billing.js";
+import { buildIntelligenceSecondLedger, centsToMoney, computeSessionSummary } from "./billing.js";
 import { intelligenceTickContext, mapDatabaseStatus } from "./anchoredIntelligence.js";
 import { decryptJsonField } from "./encryption.js";
 
@@ -36,14 +36,18 @@ const GENESIS_COMPONENTS = Object.freeze([
   { id: "telemetry-ingest", layer: "telemetry", status: "implemented", routes: ["POST /ndsp/telemetry"], responsibility: "Stores consent- or scope-authorized NDSP telemetry events for ring synchronization without storing raw biometric or thought data." },
   { id: "ring-monitoring", layer: "intelligence", status: "implemented", routes: ["GET /genesis/account-sync"], responsibility: "Projects telemetry into five Genesis rings with deterministic string intelligence digests and non-extractive anchor references." },
   { id: "invoice-drafting", layer: "billing", status: "implemented", routes: ["POST /genesis/invoices/draft", "POST /invoices/from-session"], responsibility: "Attaches ring-monitoring evidence and anchored network keys to metered invoice drafts." },
-  { id: "technical-structure", layer: "planning", status: "implemented", routes: ["GET /genesis/structure"], responsibility: "Exposes the versioned NDSP Genesis v3.0 component map, data flows, contracts, and roadmap." }
+  { id: "technical-structure", layer: "planning", status: "implemented", routes: ["GET /genesis/structure"], responsibility: "Exposes the versioned NDSP Genesis v3.0 component map, data flows, contracts, and roadmap." },
+  { id: "coherence-segment", layer: "ndsp-segments", status: "implemented", routes: ["GET /ndsp/state", "GET /genesis/account-sync"], responsibility: "Scores ring agreement, entropy stability, and anchor coverage for each intelligence stream." },
+  { id: "contingency-segment", layer: "ndsp-segments", status: "implemented", routes: ["GET /ndsp/state", "GET /genesis/account-sync"], responsibility: "Measures telemetry depth, session specificity, and anchor coverage for fallback readiness." },
+  { id: "continuity-segment", layer: "ndsp-segments", status: "implemented", routes: ["POST /sessions/:id/heartbeat", "GET /genesis/account-sync"], responsibility: "Tracks uninterrupted 1 Hz live ticks and separates recovery adjustments from billable seconds." }
 ]);
 
 const GENESIS_DATA_FLOWS = Object.freeze([
   { id: "browser-activity-to-heartbeat", source: "Genesis browser activity meter", target: "usage_events", cadence: "1 Hz while active", privacy: "activity seconds only; no literal thought capture" },
   { id: "telemetry-to-ring-sync", source: "ndsp_telemetry.payload_json", target: "genesis rings", cadence: "event driven", privacy: "payloads are account-owned and consent/scope gated" },
   { id: "anchor-to-relevancy", source: "anchored_assets + map_assets", target: "daily_unix_relevancy", cadence: "request time", privacy: "anchor references are considered, not extracted into customer records" },
-  { id: "metering-to-invoice", source: "sessions + usage_events + catalog_items", target: "invoice draft", cadence: "on demand", privacy: "invoice lines include seconds, quantities, and ring status summaries" }
+  { id: "metering-to-invoice", source: "sessions + usage_events + catalog_items", target: "invoice draft", cadence: "on demand", privacy: "invoice lines include seconds, quantities, and ring status summaries" },
+  { id: "segments-to-invoice-evidence", source: "ndsp_stream_metrics", target: "invoice genesis evidence", cadence: "on demand", privacy: "coherence, contingency, and continuity scores only; raw telemetry remains out of invoice payloads" }
 ]);
 
 const GENESIS_ROADMAP = Object.freeze([
@@ -233,6 +237,31 @@ export function computeStreamMetrics({ db, accountId, sessionId = null, monitori
   return metrics;
 }
 
+
+export function genesisSegmentsFromMetrics(metrics = {}){
+  const computedAt = metrics.computed_at || new Date().toISOString();
+  return {
+    schema: "synaptics.ndsp.genesis.segments.v1",
+    core_version: GENESIS_CORE_VERSION,
+    computed_at: computedAt,
+    coherence: {
+      score: Number(metrics.coherence ?? 0),
+      status: Number(metrics.coherence ?? 0) >= 70 ? "stable" : "needs_telemetry",
+      basis: "entropy stability, synced ring coverage, and anchor coverage"
+    },
+    contingency: {
+      score: Number(metrics.contingency ?? 0),
+      status: Number(metrics.contingency ?? 0) >= 70 ? "ready" : "warming",
+      basis: "telemetry depth, session specificity, and anchor fallback coverage"
+    },
+    continuity: {
+      score: Number(metrics.continuity ?? 0),
+      status: Number(metrics.continuity ?? 0) >= 70 ? "continuous" : "gapped_or_pending",
+      basis: "1 Hz live tick sequence continuity with recovery adjustments excluded from live tick ratio"
+    }
+  };
+}
+
 export function genesisEntropticSettings({ anchoredAsset = null, relevancy = null } = {}){
   const tickRateHz = Number(anchoredAsset?.tick_rate_hz) || 1;
   return {
@@ -375,6 +404,7 @@ export function genesisRingMonitoring({ db, accountId, sessionId = null, anchorI
     rings
   };
   response.latest_metrics = computeStreamMetrics({ db, accountId, sessionId, monitoring: response, now });
+  response.segments = genesisSegmentsFromMetrics(response.latest_metrics);
   return response;
 }
 
@@ -397,6 +427,7 @@ export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
     core_version: GENESIS_CORE_VERSION,
     account_id: accountId ?? monitoring?.account_id ?? null,
     session_id: sessionId ?? monitoring?.session_id ?? null,
+    segments: genesisSegmentsFromMetrics(monitoring?.latest_metrics || {}),
     monitoring_summary: {
       system: monitoring?.system || "genesis",
       anchor_id: monitoring?.anchor_id || DEFAULT_ANCHOR_ID,
@@ -410,7 +441,7 @@ export function genesisInvoiceEvidence({ monitoring, accountId, sessionId }){
     anchor_ids: rings.map(ring => ring.anchor_id),
     telemetry_event_counts: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.telemetry_events])),
     latest_telemetry_timestamps: Object.fromEntries(rings.map(ring => [ring.ring_id, ring.latest_telemetry_at])),
-    privacy: "Stores deterministic digests, ring monitoring summaries, anchor IDs, event counts, and timestamps only; does not store raw thought data, raw biometric data, or raw telemetry payload strings."
+    privacy: "Stores deterministic digests, ring monitoring summaries, segment scores, anchor IDs, event counts, and timestamps only; does not store raw thought data, raw biometric data, or raw telemetry payload strings."
   };
 }
 
@@ -541,6 +572,7 @@ export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7
       quantity_unit: line.quantity_unit,
       unit_price_cents: line.unit_price.cents,
       line_total_cents: line.cost.cents,
+      billing_mark: line.billing_mark,
       ring_monitoring: monitoring.rings.map(ring => ({ ring_id: ring.id, anchor_id: ring.anchor_id, status: ring.status }))
     })),
     totals: {
@@ -550,6 +582,7 @@ export function generateGenesisInvoiceDraft({ db, accountId, sessionId, days = 7
       total_cents: summary.total.cents,
       total: centsToMoney(summary.total.cents, summary.total.currency || "CAD")
     },
+    intelligence_second_ledger: buildIntelligenceSecondLedger({ sessionId, lines: summary.lines }),
     genesis: genesisEvidence
   };
 }

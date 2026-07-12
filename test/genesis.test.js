@@ -52,6 +52,8 @@ describe("Genesis account sync", () => {
     assert.equal(sync.day_schedule[1].service_day, "2026-07-12");
     assert.equal(sync.latest_metrics.stream_id, "sess_1");
     assert.ok(sync.latest_metrics.coherence >= 0);
+    assert.equal(sync.segments.schema, "synaptics.ndsp.genesis.segments.v1");
+    assert.equal(typeof sync.segments.coherence.score, "number");
   });
 
   it("scores string intelligence against anchored relevancy without extracting anchors", () => {
@@ -73,6 +75,9 @@ describe("Genesis account sync", () => {
     assert.equal(structure.schema, "synaptics.ndsp.genesis.technical-structure.v1");
     assert.equal(structure.rings.length, 5);
     assert.ok(structure.components.some(component => component.id === "technical-structure"));
+    assert.ok(structure.components.some(component => component.id === "coherence-segment"));
+    assert.ok(structure.components.some(component => component.id === "contingency-segment"));
+    assert.ok(structure.components.some(component => component.id === "continuity-segment"));
     assert.ok(structure.data_flows.some(flow => flow.id === "metering-to-invoice"));
     assert.equal(structure.contracts.structure, "GET /genesis/structure");
     assert.equal(roadmap.schema, "synaptics.ndsp.genesis.roadmap.v1");
@@ -85,10 +90,13 @@ describe("Genesis account sync", () => {
     assert.equal(draft.schema, "synaptics.genesis.invoice.draft.v1");
     assert.equal(draft.totals.total_cents, 15);
     assert.equal(draft.lines[0].ring_monitoring.length, 5);
+    assert.equal(draft.lines[0].billing_mark.tick_mark, "billed_intelligence_second");
+    assert.equal(draft.intelligence_second_ledger.billed_intelligence_seconds, 2);
     assert.equal(draft.genesis.core_version, "NDSP-GENESIS-CORE v3.0.0");
     assert.equal(draft.genesis.account_id, "acct_1");
     assert.equal(draft.genesis.session_id, "sess_1");
     assert.equal(draft.genesis.rings.length, 5);
+    assert.equal(draft.genesis.segments.schema, "synaptics.ndsp.genesis.segments.v1");
     assert.equal(draft.genesis.anchor_ids.length, 5);
     assert.equal(typeof draft.genesis.string_intelligence_digests["ring-1"], "string");
     assert.equal(draft.genesis.telemetry_event_counts["ring-1"], 0);
