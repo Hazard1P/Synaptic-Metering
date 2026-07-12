@@ -582,12 +582,63 @@ anomaly if |zscore(entropy)| > 2.2`;
     return { entropyIndex:e, coherence, trend, mean, std, z, anomalies };
   }
 
+  function currentSessionId(){
+    const sessionInput = $("synSession");
+    return (sessionInput?.value || sessionStorage.getItem("syn_sessionId") || "").trim();
+  }
+
+  function currentRingId(){
+    const selectedRing = document.querySelector("[data-ring-id].active, [data-ring-id][aria-selected='true'], select#ringSelect");
+    const ringId = selectedRing?.value || selectedRing?.dataset?.ringId;
+    return (ringId || "ring-1").trim();
+  }
+
+  function deterministicGenesisString(inputs, channels){
+    const tick = state.meta?.tick ?? 0;
+    const entropy = state.derived?.entropyIndex ?? 0;
+    const nowISO = inputs?.time?.nowISO || new Date(startedAt.getTime() + tick * 1000).toISOString();
+    const channelSummary = Object.entries(channels || {})
+      .map(([key, value])=>`${key}=${Number(value || 0).toFixed(3)}`)
+      .join(";");
+    return [
+      `session=${currentSessionId() || "pending"}`,
+      `ring=${currentRingId()}`,
+      `anchor=${ANCHOR_ID}`,
+      `tick=${tick}`,
+      `entropy=${Number(entropy || 0).toFixed(3)}`,
+      `time=${nowISO}`,
+      `channels=${channelSummary || "pending"}`
+    ].join(" | ");
+  }
+
+  function genesisTelemetryPayload(inputs){
+    const channels = { ...(state.channels || {}) };
+    const genesisStrings = typeof window.__currentGenesisStrings === "function"
+      ? window.__currentGenesisStrings()
+      : null;
+    const genesisString = Array.isArray(genesisStrings) && genesisStrings.length
+      ? genesisStrings.join(" | ")
+      : deterministicGenesisString(inputs, channels);
+    const payload = {
+      ring_id: currentRingId(),
+      anchor_id: ANCHOR_ID,
+      event_type: "genesis-telemetrics",
+      provider: "genesis-integrated-page",
+      genesis_string: genesisString,
+      channels,
+      inputs
+    };
+    const sessionId = currentSessionId();
+    if(sessionId) payload.session_id = sessionId;
+    return payload;
+  }
+
   // Backend (optional)
   async function pushTelemetry(inputs){
     if(!NDSP_BACKEND) return null;
     try{
       const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
-        method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(inputs)
+        method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(genesisTelemetryPayload(inputs))
       });
       const body = await parseResponseBody(r);
       if(!r.ok){
@@ -922,6 +973,7 @@ anomaly if |zscore(entropy)| > 2.2`;
       'status=' + (($('synStatus')?.textContent || 'idle').trim())
     ];
   }
+  window.__currentGenesisStrings = currentGenesisStrings;
   function renderGenesisActionState({ monitoring=null, liveEntropy=null, status='refreshed' } = {}){
     const rings = monitoring?.rings || [];
     const synced = rings.filter(ring=>ring.status === 'telemetry_synced').length;
