@@ -315,6 +315,25 @@ CREATE TABLE IF NOT EXISTS ndsp_telemetry (
   FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS ndsp_stream_metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stream_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  session_id TEXT,
+  coherence REAL NOT NULL,
+  contingency REAL NOT NULL,
+  continuity REAL NOT NULL,
+  computed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  basis_json TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_stream_metrics_stream
+  ON ndsp_stream_metrics(stream_id, computed_at);
+
+CREATE INDEX IF NOT EXISTS idx_ndsp_stream_metrics_account
+  ON ndsp_stream_metrics(account_id, computed_at);
+
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
