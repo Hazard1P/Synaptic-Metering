@@ -297,7 +297,14 @@ export function requireAccount(req, res, next){
 
 export function startGoogleOAuth(req, res, next){
   try{
-    const clientId = requireEnv("GOOGLE_CLIENT_ID");
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if(!clientId){
+      return res.status(503).json({
+        error: "google_oauth_not_configured",
+        message: "Google sign-in is not configured for this deployment. Please contact the site administrator."
+      });
+    }
+
     const redirectUri = googleRedirectUri(req);
     const nonce = randomBytes(24).toString("base64url");
     const signedState = signState(nonce);
