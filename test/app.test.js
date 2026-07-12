@@ -114,6 +114,27 @@ after(async () => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+
+describe("health route", () => {
+  it("keeps JSON liveness responses for API callers", async () => {
+    const res = await request("/health", { headers: { accept: "application/json" } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /application\/json/);
+    const body = await json(res);
+    assert.equal(body.ok, true);
+    assert.equal(body.status, "alive");
+  });
+
+  it("renders a browser-friendly health page for the home page action", async () => {
+    const res = await request("/health", { headers: { accept: "text/html" } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/html/);
+    const body = await res.text();
+    assert.match(body, /Synaptic<\/span> Metering Health/);
+    assert.match(body, /Back Home/);
+  });
+});
+
 describe("computeSessionSummary", () => {
   it("totals live and recovery usage with catalog pricing", () => {
     const sessionId = seedSession({ live: 5, recovered: 3 });

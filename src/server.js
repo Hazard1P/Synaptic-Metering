@@ -532,14 +532,61 @@ function buildReadinessStatus(){
   };
 }
 
+function healthPayload(){
+  return {
+    ok: true,
+    service: "synaptics-seconds-api",
+    status: "alive",
+    description: "Shallow liveness only; the Express process can answer HTTP.",
+    ts: new Date().toISOString()
+  };
+}
+
+function healthPage(payload){
+  const statusText = payload.ok ? "Online" : "Degraded";
+  const statusClass = payload.ok ? "ok" : "degraded";
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synaptic Metering Health</title>
+  <style>
+    body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#08111f;color:#eef6ff}
+    main{max-width:760px;padding:48px;border:1px solid rgba(125,211,252,.25);border-radius:24px;background:linear-gradient(145deg,rgba(15,23,42,.92),rgba(14,116,144,.16));box-shadow:0 24px 90px rgba(0,0,0,.35)}
+    h1{margin:0 0 16px;font-size:clamp(2rem,6vw,3.5rem);line-height:1}.brand{color:#67e8f9}p{color:#cbd5e1;font-size:1.1rem;line-height:1.65}.badge{display:inline-flex;align-items:center;gap:10px;border-radius:999px;padding:10px 16px;font-weight:800}.badge.ok{color:#052e16;background:#86efac}.badge.degraded{color:#431407;background:#fdba74}.details{margin-top:24px;padding:18px;border-radius:16px;background:rgba(15,23,42,.72);border:1px solid rgba(125,211,252,.2)}dl{display:grid;grid-template-columns:max-content 1fr;gap:10px 18px;margin:0}dt{color:#93c5fd;font-weight:700}dd{margin:0;color:#e0f2fe;word-break:break-word}.links{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}a{color:#06121f;background:#67e8f9;text-decoration:none;border-radius:999px;padding:12px 18px;font-weight:700}a.secondary{color:#e0f2fe;background:rgba(14,165,233,.18);border:1px solid rgba(125,211,252,.35)}
+  </style>
+</head>
+<body>
+  <main>
+    <h1><span class="brand">Synaptic</span> Metering Health</h1>
+    <p>${payload.description}</p>
+    <span class="badge ${statusClass}">${statusText}</span>
+    <section class="details" aria-label="Health details">
+      <dl>
+        <dt>Service</dt><dd>${payload.service}</dd>
+        <dt>Status</dt><dd>${payload.status}</dd>
+        <dt>Checked</dt><dd>${payload.ts}</dd>
+      </dl>
+    </section>
+    <div class="links">
+      <a href="/">Back Home</a>
+      <a class="secondary" href="/ready">Readiness JSON</a>
+      <a class="secondary" href="/health/full">Full Health JSON</a>
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
 // --- health/readiness (public)
-app.get("/health", (req,res)=>res.json({
-  ok: true,
-  service: "synaptics-seconds-api",
-  status: "alive",
-  description: "Shallow liveness only; the Express process can answer HTTP.",
-  ts: new Date().toISOString()
-}));
+app.get("/health", (req,res)=>{
+  const payload = healthPayload();
+  if(req.accepts(["html", "json"]) === "html"){
+    return res.type("html").send(healthPage(payload));
+  }
+  return res.json(payload);
+});
 
 app.get("/health/full", (req,res,next)=>{
   try{
