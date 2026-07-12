@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 
 import { openDb } from "./db/db.js";
@@ -437,7 +438,8 @@ const REQUIRED_SCHEMA = [
   { table: "invoices", columns: ["id", "account_id", "source", "status", "payload_json", "created_at", "updated_at"] },
   { table: "anchored_assets", columns: ["id", "label", "asset_type", "permanence", "role", "physics_role", "tick_rate_hz"] },
   { table: "map_assets", columns: ["map_id", "anchor_asset_id", "digest", "verification_status", "metadata_json"] },
-  { table: "intelligence_network_keys", columns: ["id", "key_kind", "key_label", "anchor_asset_id", "status"] }
+  { table: "intelligence_network_keys", columns: ["id", "key_kind", "key_label", "anchor_asset_id", "status"] },
+  { table: "map_invoice_session_keys", columns: ["id", "account_id", "session_id", "invoice_id", "anchor_asset_id", "map_id", "session_key_digest", "persistence_seconds", "created_at", "persistent_until", "status"] }
 ];
 
 function assertSafeIdentifier(value){
@@ -1449,6 +1451,75 @@ app.get("/sessions/:id/summary", (req,res)=>{
   res.json(summary);
 });
 
+app.get("/sessions/:id/map-history", requireAccount, (req,res)=>{
+  const session = db.prepare("SELECT id, account_id FROM sessions WHERE id=?").get(req.params.id);
+  if(!session) return res.status(404).json({ error:"session_not_found" });
+  if(session.account_id !== req.authAccount.id) return rejectForbiddenSession(res);
+
+  const rows = db.prepare(`
+    SELECT *
+    FROM map_invoice_session_keys
+    WHERE account_id=? AND session_id=?
+    ORDER BY created_at DESC, invoice_id DESC
+  `).all(req.authAccount.id, req.params.id);
+
+  res.json({
+    session_id: req.params.id,
+    map_session_keys: rows.map(serializeMapInvoiceSessionKey)
+  });
+});
+
+function loadCanonicalMapAsset(anchorAssetId = "dyson-sphere-ring-1"){
+  return db.prepare(`
+    SELECT map_id, anchor_asset_id, digest
+    FROM map_assets
+    WHERE anchor_asset_id=?
+    ORDER BY created_at ASC, map_id ASC
+    LIMIT 1
+  `).get(anchorAssetId) || null;
+}
+
+function buildMapInvoiceSessionKey({ accountId, sessionId, invoiceId, anchorAssetId, mapId, mapDigest, issuedAt, persistenceSeconds }){
+  const stableInput = [
+    "synaptics.map_invoice_session_key.v1",
+    accountId,
+    sessionId,
+    invoiceId,
+    anchorAssetId,
+    mapId,
+    mapDigest,
+    issuedAt
+  ].join("|");
+  const sessionKey = createHash("sha256").update(stableInput).digest("hex");
+  return {
+    id: `misk_${nanoid(18)}`,
+    anchor_asset_id: anchorAssetId,
+    map_id: mapId,
+    session_key_digest: createHash("sha256").update(sessionKey).digest("hex"),
+    session_key_ciphertext: null,
+    persistence_seconds: persistenceSeconds,
+    persistent_until: new Date(new Date(issuedAt).getTime() + persistenceSeconds * 1000).toISOString(),
+    status: "active"
+  };
+}
+
+function serializeMapInvoiceSessionKey(row){
+  if(!row) return null;
+  return {
+    id: row.id,
+    invoice_id: row.invoice_id,
+    session_id: row.session_id,
+    anchor_asset_id: row.anchor_asset_id,
+    map_id: row.map_id,
+    session_key_digest: row.session_key_digest,
+    persistence_seconds: row.persistence_seconds,
+    created_at: row.created_at,
+    persistent_until: row.persistent_until,
+    status: row.status,
+    retrieval_route: `/invoices/${row.invoice_id}/map-session-key`
+  };
+}
+
 
 // --- invoices
 app.post("/invoices/from-session", requireAccount, (req,res)=>{
@@ -1458,7 +1529,29 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
   if(!summary) return res.status(404).json({ error:"session_not_found" });
   if(summary.session.account_id !== req.authAccount.id) return rejectForbiddenSession(res);
 
+  const id = "inv_" + nanoid(18);
   const issued_at = new Date().toISOString();
+  const anchorAssetId = "dyson-sphere-ring-1";
+  const mapAsset = loadCanonicalMapAsset(anchorAssetId);
+  if(!mapAsset) return res.status(500).json({ error:"map_asset_not_found" });
+  const persistenceSeconds = 60 * 60 * 24 * 90;
+  const mapSessionKey = buildMapInvoiceSessionKey({
+    accountId: req.authAccount.id,
+    sessionId: session_id,
+    invoiceId: id,
+    anchorAssetId,
+    mapId: mapAsset.map_id,
+    mapDigest: mapAsset.digest,
+    issuedAt: issued_at,
+    persistenceSeconds
+  });
+  const mapSessionKeyMetadata = serializeMapInvoiceSessionKey({
+    ...mapSessionKey,
+    account_id: req.authAccount.id,
+    session_id,
+    invoice_id: id,
+    created_at: issued_at
+  });
   const invoice = {
     schema: "synaptics.invoice.v1",
     issued_at,
@@ -1486,7 +1579,8 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
       versions: summary.catalog_versions,
       price_snapshot: summary.catalog_snapshot
     },
-    intelligence: intelligenceTickContext({ db, anchorId: "dyson-sphere-ring-1", invoiceKey: `A1:${session_id}` }),
+    map_session_key: mapSessionKeyMetadata,
+    intelligence: intelligenceTickContext({ db, anchorId: anchorAssetId, invoiceKey: `A1:${session_id}` }),
     network: {
       a1_box_key: `A1:${session_id}`,
       operation: "Seconds_Of_Intelligence",
@@ -1502,29 +1596,58 @@ app.post("/invoices/from-session", requireAccount, (req,res)=>{
     }
   };
 
-  const id = "inv_" + nanoid(18);
   const catalogVersion = summary.catalog_versions.join(",") || null;
   const catalogSnapshotJson = JSON.stringify(summary.catalog_snapshot);
 
-  db.prepare(`
-    INSERT INTO invoices (
-      id, account_id, session_id, source, status, verification_method,
-      accepted_at, verified_at, payload_json, catalog_version, catalog_snapshot_json
-    )
-    VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?, ?, ?)
-  `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice), catalogVersion, catalogSnapshotJson);
+  const createGeneratedInvoice = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO invoices (
+        id, account_id, session_id, source, status, verification_method,
+        accepted_at, verified_at, payload_json, catalog_version, catalog_snapshot_json
+      )
+      VALUES (?, ?, ?, 'generated', 'accepted', 'generated_from_owned_session', datetime('now'), datetime('now'), ?, ?, ?)
+    `).run(id, req.authAccount.id, session_id, JSON.stringify(invoice), catalogVersion, catalogSnapshotJson);
 
-  const key = upsertIntelligenceNetworkKey(db, {
-    keyKind: "invoice_key",
-    keyLabel: `A1:${session_id}`,
-    accountId: req.authAccount.id,
-    invoiceId: id,
-    anchorAssetId: "dyson-sphere-ring-1",
-    status: "confirmed"
+    const key = upsertIntelligenceNetworkKey(db, {
+      keyKind: "invoice_key",
+      keyLabel: `A1:${session_id}`,
+      accountId: req.authAccount.id,
+      invoiceId: id,
+      anchorAssetId,
+      status: "confirmed"
+    });
+
+    db.prepare(`
+      INSERT INTO map_invoice_session_keys (
+        id, account_id, session_id, invoice_id, anchor_asset_id, map_id,
+        session_key_digest, session_key_ciphertext, persistence_seconds,
+        created_at, persistent_until, status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      mapSessionKey.id,
+      req.authAccount.id,
+      session_id,
+      id,
+      mapSessionKey.anchor_asset_id,
+      mapSessionKey.map_id,
+      mapSessionKey.session_key_digest,
+      mapSessionKey.session_key_ciphertext,
+      mapSessionKey.persistence_seconds,
+      issued_at,
+      mapSessionKey.persistent_until,
+      mapSessionKey.status
+    );
+
+    return { key, mapSessionKey: db.prepare("SELECT * FROM map_invoice_session_keys WHERE invoice_id=?").get(id) };
   });
 
+  const created = createGeneratedInvoice();
+  const persistedMapSessionKey = serializeMapInvoiceSessionKey(created.mapSessionKey);
+  invoice.map_session_key = persistedMapSessionKey;
+
   auditLog("invoice_creation", req, { invoice_id: id, session_id, account_id: req.authAccount.id, source: "generated", status: "accepted" });
-  res.status(201).json({ id, invoice, key });
+  res.status(201).json({ id, invoice, key: created.key, map_session_key: persistedMapSessionKey });
 });
 
 app.get("/invoices", requireAccount, (req,res)=>{
@@ -1553,6 +1676,18 @@ app.get("/invoices", requireAccount, (req,res)=>{
       invoice: JSON.parse(row.payload_json)
     }))
   });
+});
+
+app.get("/invoices/:id/map-session-key", requireAccount, (req,res)=>{
+  const row = db.prepare(`
+    SELECT misk.*
+    FROM map_invoice_session_keys misk
+    JOIN invoices i ON i.id = misk.invoice_id
+    WHERE misk.invoice_id=? AND i.account_id=? AND misk.account_id=?
+  `).get(req.params.id, req.authAccount.id, req.authAccount.id);
+  if(!row) return res.status(404).json({ error:"map_session_key_not_found" });
+
+  res.json({ map_session_key: serializeMapInvoiceSessionKey(row) });
 });
 
 
