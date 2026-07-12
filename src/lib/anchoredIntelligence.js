@@ -45,6 +45,16 @@ export const ANCHORED_ASSET_MAP = Object.freeze({
     tick_rate_hz: 1,
     vector: "fabric_universe_ring_map_reference"
   },
+  "live-entropy-index": {
+    id: "live-entropy-index",
+    label: "Live Entropy Index build anchor",
+    asset_type: "entropy_index_build_anchor",
+    permanence: "deterministic_build_anchor",
+    role: "live_string_intelligence_entropy_reference",
+    physics_role: "non_extractive_entropy_scoring_reference_anchor",
+    tick_rate_hz: 1,
+    vector: "normalized_string_entropy_sha256_tick_alignment"
+  },
   "dyson-sphere-ring-1": {
     id: "dyson-sphere-ring-1",
     label: "Dyson-Sphere Ring-1 map database",

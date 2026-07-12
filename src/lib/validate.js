@@ -25,7 +25,7 @@ const ANCHORED_ASSET_IDS = Object.freeze(Object.keys(ANCHORED_ASSET_MAP));
 export const MasterKeyBody = z.object({
   key_label: z.string().min(1).max(240),
   account_id: z.string().min(1).max(120).nullable().optional(),
-  anchor_asset_id: z.enum(["major-ursa", "cassiopeia", "isolated-blackholes", "dyson-sphere-ring-1", "fabric-universe-ring-map"]).default("major-ursa"),
+  anchor_asset_id: z.enum(["major-ursa", "cassiopeia", "isolated-blackholes", "dyson-sphere-ring-1", "fabric-universe-ring-map", "live-entropy-index"]).default("major-ursa"),
   status: z.enum(["pending", "confirmed", "revoked"]).default("confirmed")
 }).strict();
 
