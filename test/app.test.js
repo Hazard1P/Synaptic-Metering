@@ -480,6 +480,16 @@ describe("NDSP intelligence streams", () => {
     assert.equal(telemetry.stream.status, "monitoring");
     assert.ok(telemetry.stream.events.some(event => event.event_type === "telemetry_ingested" && event.telemetry_id === telemetry.id));
 
+    const storedTelemetry = db.prepare("SELECT payload_json FROM ndsp_telemetry WHERE id=?").get(telemetry.id);
+    assert.match(storedTelemetry.payload_json, /^v1:/);
+
+    const syncRes = await request(`/genesis/account-sync?session_id=${encodeURIComponent(sessionId)}`, { headers: { cookie } });
+    assert.equal(syncRes.status, 200);
+    const sync = await json(syncRes);
+    const syncedRing = sync.rings.find(ring => ring.id === "ring-1");
+    assert.equal(syncedRing.status, "telemetry_synced");
+    assert.equal(syncedRing.string_intelligence.normalized, "invoice-linked telemetry");
+
     const invoiceRes = await request("/invoices/from-session", {
       method: "POST",
       headers: { cookie },
