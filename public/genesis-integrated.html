@@ -395,8 +395,34 @@
   // ============================================================
 
   // ---- OPTIONAL BACKEND AUTHORITY (read-only pull + telemetry push)
-  // Set to your NDSP Control Plane domain. Keep empty for local mode.
-  const NDSP_BACKEND = location.origin; // integrated same-origin backend
+  // Explicitly opt into backend mode with ?backend=same-origin or ?backend=https://...
+  // Use ?backend=off (or omit it) for local/offline mode.
+  function resolveNdspBackend(loc = location){
+    const params = new URLSearchParams(loc.search || "");
+    const requested = (params.get("backend") || "off").trim();
+    const isGenesisAppRoute = (loc.pathname || "") === "/genesis";
+
+    if(!requested || requested === "off") return "";
+    if(requested === "same-origin"){
+      return isGenesisAppRoute ? loc.origin : "";
+    }
+
+    try{
+      const backendUrl = new URL(requested);
+      if(backendUrl.protocol !== "https:" && backendUrl.protocol !== "http:") return "";
+      backendUrl.hash = "";
+      backendUrl.search = "";
+      return backendUrl.origin;
+    }catch{
+      return "";
+    }
+  }
+
+  if(typeof window !== "undefined"){
+    window.__resolveNdspBackend = resolveNdspBackend;
+  }
+
+  const NDSP_BACKEND = resolveNdspBackend();
 
   // ---- Filled Defaults (missing fields resolved)
   const CORE_VERSION = "NDSP-GENESIS-CORE v3.0.0 ULTRA STATIC";
