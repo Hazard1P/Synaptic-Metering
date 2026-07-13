@@ -1929,7 +1929,7 @@ app.post("/ndsp/telemetry", requireApiKeyOrAccount, (req,res,next)=>{
     if(streamResult.stream.account_id !== accountId || (sessionId && streamResult.stream.session_id !== sessionId)){
       return res.status(403).json({ error: "stream_session_mismatch" });
     }
-    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, accountId, sessionId, JSON.stringify(payload));
+    db.prepare("INSERT INTO ndsp_telemetry (id, account_id, session_id, payload_json) VALUES (?, ?, ?, ?)").run(id, accountId, sessionId, encryptJsonField(payload));
     const event = appendTelemetryMonitoringEvent({ db, stream: streamResult.stream, telemetryId: id, payload: { ring_id: payload.ring_id || payload.ring || null } });
     if(streamResult.created) auditLog("stream_creation", req, { stream_id: streamResult.stream.id, account_id: accountId, session_id: sessionId, anchor_asset_id: streamResult.stream.anchor_asset_id });
     auditLog("stream_telemetry_ingestion", req, { stream_id: streamResult.stream.id, telemetry_id: id, account_id: accountId, session_id: sessionId });
