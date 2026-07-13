@@ -873,10 +873,37 @@ anomaly if |zscore(entropy)| > 2.2`;
   let authenticatedAccount=null;
   const IDLE_MS = 5000;
   let itemLabel='';
+  let heartbeatInFlight=false;
 
   function setStatus(msg){ $('synStatus').textContent = msg; }
   function saveCfg(){ sessionStorage.setItem('syn_sessionId',$('synSession').value.trim()); sessionStorage.setItem('syn_itemId',$('synItem').value || ''); }
   function loadCfg(){ $('synSession').value=sessionStorage.getItem('syn_sessionId')||''; }
+  function heartbeatSequenceStorageKey(sessionId){
+    return 'syn_heartbeat_tick_sequence:' + encodeURIComponent(sessionId);
+  }
+  function nextHeartbeatSequence(sessionId, storage=sessionStorage){
+    const stored = Number(storage.getItem(heartbeatSequenceStorageKey(sessionId)) || '1');
+    return Number.isSafeInteger(stored) && stored >= 1 ? stored : 1;
+  }
+  function markHeartbeatAccepted(sessionId, sequenceNumber, storage=sessionStorage){
+    storage.setItem(heartbeatSequenceStorageKey(sessionId), String(sequenceNumber + 1));
+  }
+  function heartbeatPayload(sessionId, sequenceNumber, now=new Date()){
+    return {
+      seconds:1,
+      event_timestamp:now.toISOString(),
+      tick_sequence:sequenceNumber,
+      idempotency_key:sessionId + ':' + sequenceNumber
+    };
+  }
+  if(typeof window !== "undefined"){
+    window.__synHeartbeatHelpers = {
+      heartbeatPayload,
+      heartbeatSequenceStorageKey,
+      markHeartbeatAccepted,
+      nextHeartbeatSequence
+    };
+  }
   function setAccountControls(account){
     authenticatedAccount = account || null;
     ['synStart','synStop','synClose'].forEach(id=>$(id).disabled = !authenticatedAccount);
@@ -952,9 +979,16 @@ anomaly if |zscore(entropy)| > 2.2`;
       const active = focused && (Date.now() - lastActivity <= IDLE_MS);
       if(active && !currentRunning){ await startItem(); await refreshGenesisActionState(); setStatus('Active use detected. Meter running on ' + itemLabel); }
       if(!active && currentRunning){ await stopItem(); setStatus('Idle detected. Meter paused.'); }
-      if(active){
+      if(active && !heartbeatInFlight){
         const sid = $('synSession').value.trim();
-        await api('/sessions/' + encodeURIComponent(sid) + '/heartbeat', { method:'POST', body:JSON.stringify({ seconds:1 }) });
+        const sequenceNumber = nextHeartbeatSequence(sid);
+        heartbeatInFlight=true;
+        try{
+          await api('/sessions/' + encodeURIComponent(sid) + '/heartbeat', { method:'POST', body:JSON.stringify(heartbeatPayload(sid, sequenceNumber)) });
+          markHeartbeatAccepted(sid, sequenceNumber);
+        }finally{
+          heartbeatInFlight=false;
+        }
         await pullSummary();
         await refreshGenesisActionState();
       }
