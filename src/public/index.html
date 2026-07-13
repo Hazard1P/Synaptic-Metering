@@ -9,16 +9,53 @@
     *{box-sizing:border-box;}
     body{
       margin:0;
+      position:relative;
+      overflow-x:hidden;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      background: radial-gradient(1000px 500px at 20% 10%, rgba(0,245,255,.16), transparent 60%),
-                  radial-gradient(900px 460px at 80% 30%, rgba(124,77,255,.18), transparent 60%),
-                  radial-gradient(900px 520px at 50% 90%, rgba(0,255,136,.10), transparent 60%),
-                  #06080c;
+      background: radial-gradient(1100px 560px at 18% 8%, rgba(0,245,255,.18), transparent 62%),
+                  radial-gradient(980px 520px at 82% 26%, rgba(124,77,255,.20), transparent 62%),
+                  radial-gradient(980px 580px at 50% 92%, rgba(0,255,136,.11), transparent 62%),
+                  linear-gradient(120deg, rgba(0,245,255,.08) 0 1px, transparent 1px 22%),
+                  linear-gradient(34deg, transparent 0 41%, rgba(143,227,255,.08) 42%, transparent 43% 100%),
+                  linear-gradient(158deg, transparent 0 55%, rgba(0,255,136,.06) 56%, transparent 57% 100%),
+                  linear-gradient(180deg, #07101a 0%, #06080c 45%, #04060a 100%);
       color:#eaf2ff;
       min-height:100vh;
     }
-    .wrap{max-width:1040px;margin:0 auto;padding:28px 18px 60px;}
+    body::before,
+    body::after{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+    }
+    body::before{
+      z-index:0;
+      opacity:.46;
+      background: linear-gradient(rgba(143,227,255,.08) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(143,227,255,.07) 1px, transparent 1px),
+                  linear-gradient(45deg, transparent 0 47%, rgba(0,245,255,.10) 48% 49%, transparent 50% 100%),
+                  radial-gradient(circle at 20% 28%, rgba(0,245,255,.36) 0 2px, transparent 3px),
+                  radial-gradient(circle at 74% 20%, rgba(0,255,136,.28) 0 2px, transparent 3px),
+                  radial-gradient(circle at 68% 72%, rgba(124,77,255,.32) 0 2px, transparent 3px);
+      background-size: 72px 72px, 72px 72px, 260px 260px, 210px 210px, 250px 250px, 230px 230px;
+      mask-image: radial-gradient(ellipse at center, #000 0%, rgba(0,0,0,.82) 48%, transparent 100%);
+    }
+    body::after{
+      z-index:0;
+      opacity:.72;
+      background: radial-gradient(closest-side at 12% 20%, rgba(0,245,255,.16), transparent 68%),
+                  radial-gradient(closest-side at 88% 18%, rgba(124,77,255,.18), transparent 70%),
+                  radial-gradient(closest-side at 78% 78%, rgba(0,255,136,.14), transparent 72%),
+                  radial-gradient(ellipse at 50% 44%, transparent 0 42%, rgba(143,227,255,.10) 43% 44%, transparent 45% 100%),
+                  radial-gradient(ellipse at 52% 52%, transparent 0 58%, rgba(124,77,255,.09) 59% 60%, transparent 61% 100%);
+      filter: blur(.2px);
+      transform: scale(1.18);
+    }
+    .wrap{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:28px 18px 60px;}
     .card{
+      position:relative;
+      z-index:1;
       background: rgba(12,16,22,.72);
       border:1px solid rgba(255,255,255,.08);
       border-radius: 18px;
