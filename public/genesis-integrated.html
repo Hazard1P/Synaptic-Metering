@@ -872,6 +872,8 @@ anomaly if |zscore(entropy)| > 2.2`;
   let loop=null, lastActivity=Date.now(), currentRunning=false;
   let authenticatedAccount=null;
   const IDLE_MS = 5000;
+  const GENESIS_REFRESH_MS = 5000;
+  let lastGenesisRefreshAt = 0;
   let itemLabel='';
 
   function setStatus(msg){ $('synStatus').textContent = msg; }
@@ -951,12 +953,14 @@ anomaly if |zscore(entropy)| > 2.2`;
       const focused = !document.hidden && document.hasFocus();
       const active = focused && (Date.now() - lastActivity <= IDLE_MS);
       if(active && !currentRunning){ await startItem(); await refreshGenesisActionState(); setStatus('Active use detected. Meter running on ' + itemLabel); }
-      if(!active && currentRunning){ await stopItem(); setStatus('Idle detected. Meter paused.'); }
+      if(!active && currentRunning){ await stopItem(); await refreshGenesisActionState(); setStatus('Idle detected. Meter paused.'); }
       if(active){
         const sid = $('synSession').value.trim();
         await api('/sessions/' + encodeURIComponent(sid) + '/heartbeat', { method:'POST', body:JSON.stringify({ seconds:1 }) });
         await pullSummary();
-        await refreshGenesisActionState();
+        if(Date.now() - lastGenesisRefreshAt >= GENESIS_REFRESH_MS){
+          await refreshGenesisActionState();
+        }
       }
     }catch(e){ setStatus('Error: ' + e.message); }
   }
@@ -1042,6 +1046,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   }
   async function refreshGenesisActionState(){
     const sid = $('synSession').value.trim(); if(!sid) return;
+    lastGenesisRefreshAt = Date.now();
     const monitoring = await api('/genesis/account-sync?session_id=' + encodeURIComponent(sid), { method:'GET' });
     let liveEntropy = null;
     try{
