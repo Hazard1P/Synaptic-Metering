@@ -476,6 +476,8 @@ anomaly if |zscore(entropy)| > 2.2`;
     history:[]
   };
   let policy=null;
+  let hasBackendPolicyResponse = false;
+  let backendTelemetryBackoffUntil = 0;
   let backendStatusMessage = NDSP_BACKEND
     ? "Telemetry backend requires sign-in and telemetry consent."
     : "Telemetry backend offline; computing locally.";
@@ -550,6 +552,28 @@ anomaly if |zscore(entropy)| > 2.2`;
       return candidate;
     }
     return status ? `http_${status}` : "rejected";
+  }
+
+  function isAuthOrConsentFailure(status, responseBody){
+    if(status === 401 || status === 403) return true;
+    const message = String(getTelemetryStatus(responseBody, status) || "").toLowerCase();
+    return message.includes("auth") || message.includes("sign") || message.includes("consent") || message.includes("permission");
+  }
+
+  function noteBackendRejection(status, responseBody){
+    if(isAuthOrConsentFailure(status, responseBody)){
+      backendTelemetryBackoffUntil = Date.now() + 60_000;
+    }
+  }
+
+  function bridgeAuthenticatedAccount(){
+    return window.__synAuthenticatedAccount || null;
+  }
+
+  function shouldUseBackendTelemetry(){
+    if(!NDSP_BACKEND) return false;
+    if(Date.now() < backendTelemetryBackoffUntil) return false;
+    return !!(bridgeAuthenticatedAccount() || currentSessionId() || hasBackendPolicyResponse);
   }
 
   async function parseResponseBody(response){
@@ -635,7 +659,7 @@ anomaly if |zscore(entropy)| > 2.2`;
 
   // Backend (optional)
   async function pushTelemetry(inputs){
-    if(!NDSP_BACKEND) return null;
+    if(!NDSP_BACKEND || !currentSessionId() || Date.now() < backendTelemetryBackoffUntil) return null;
     try{
       const r=await fetch(NDSP_BACKEND+"/ndsp/telemetry",{
         method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(genesisTelemetryPayload(inputs))
@@ -643,6 +667,7 @@ anomaly if |zscore(entropy)| > 2.2`;
       const body = await parseResponseBody(r);
       if(!r.ok){
         const status = getTelemetryStatus(body, r.status);
+        noteBackendRejection(r.status, body);
         setBackendStatus(`Telemetry skipped: ${status}. Backend telemetry requires sign-in and telemetry consent; continuing local computation.`);
         return null;
       }
@@ -655,11 +680,15 @@ anomaly if |zscore(entropy)| > 2.2`;
   }
 
   async function pullState(){
-    if(!NDSP_BACKEND) return null;
+    if(!NDSP_BACKEND || Date.now() < backendTelemetryBackoffUntil) return null;
     try{
       const r=await fetch(NDSP_BACKEND+"/ndsp/state",{ credentials:"include" });
-      if(!r.ok) return null;
-      const j=await r.json();
+      const j=await r.json().catch(()=>null);
+      if(!r.ok){
+        noteBackendRejection(r.status, j);
+        return null;
+      }
+      hasBackendPolicyResponse = true;
       policy=j.policy||null;
       return j.state||null;
     }catch{ return null; }
@@ -821,9 +850,13 @@ anomaly if |zscore(entropy)| > 2.2`;
     state.history.push({ t:Date.now(), entropy:derived.entropyIndex });
     state.history=state.history.slice(-HISTORY_MAX);
 
-    const pushed=await pushTelemetry(inputs);
-    const pulled=await pullState();
-    state = mergeBackendState(state, pulled || pushed);
+    if(shouldUseBackendTelemetry()){
+      const pushed=await pushTelemetry(inputs);
+      const pulled=await pullState();
+      state = mergeBackendState(state, pulled || pushed);
+    }else if(NDSP_BACKEND && Date.now() >= backendTelemetryBackoffUntil){
+      setBackendStatus("Telemetry skipped: awaiting sign-in, session, or backend policy context; continuing local computation.");
+    }
 
     renderAll();
   }
@@ -879,6 +912,7 @@ anomaly if |zscore(entropy)| > 2.2`;
   function loadCfg(){ $('synSession').value=sessionStorage.getItem('syn_sessionId')||''; }
   function setAccountControls(account){
     authenticatedAccount = account || null;
+    window.__synAuthenticatedAccount = authenticatedAccount;
     ['synStart','synStop','synClose'].forEach(id=>$(id).disabled = !authenticatedAccount);
     $('synLogin').style.display = authenticatedAccount ? 'none' : 'inline-block';
     $('synLogout').style.display = authenticatedAccount ? 'inline-block' : 'none';
